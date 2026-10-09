@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com https://api.telegram.org http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>STEJECT</title>
+<meta name="description" content="Turn a project written by ChatGPT or Claude into a real GitHub repo with real commits.">
+<meta name="theme-color" content="#142033">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="logo" href="#ship" data-go="ship" aria-label="STEJECT home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5 27 19H5z" fill="#ff6a2b"/><rect x="5" y="22" width="22" height="5" rx="1" fill="#ff6a2b"/></svg>
+    <b>Ste<span>ject</span></b>
+  </a>
+  <nav class="tabs-main" aria-label="Main">
+    <button type="button" data-go="ship" aria-current="page">Ship</button>
+    <button type="button" data-go="learn">Learn</button>
+    <button type="button" data-go="history">History</button>
+    <button type="button" data-go="settings">Settings</button>
+  </nav>
+  <div class="chips">
+    <button type="button" class="chip" id="chipGh" data-go="settings" data-focus="ghToken">GitHub: off</button>
+    <button type="button" class="chip" id="chipAi" data-go="settings" data-focus="aiUrl">AI: off</button>
+  </div>
+</header>
+<div class="updatebar" id="updateBar" hidden>
+  <span id="updateText"></span>
+  <a class="btn small" id="updateLink" href="#" target="_blank" rel="noopener">Download update</a>
+  <button type="button" class="link" id="updateDismiss">Later</button>
+</div>
+
+<!-- ================================================================== SHIP -->
+<main class="wrap" id="page-ship" data-page="ship">
+  <div class="page-head">
+    <div>
+      <h1>Ship a project</h1>
+      <p>Paste what ChatGPT or Claude wrote. STEJECT checks it and pushes it to GitHub as real commits.</p>
+    </div>
+    <div class="flow" aria-label="How it works"><b>paste</b><i>→</i><b>check</b><i>→</i><b>inspect</b><i>→</i><b>push</b><i>→</i><b>alert</b></div>
+  </div>
+
+  <div class="grid">
+    <!-- 1. PASTE -->
+    <section class="panel paste" aria-labelledby="h-paste">
+      <div class="step"><span class="n">1</span><h2 id="h-paste">Paste</h2><span class="hint" id="sampleTag"><span class="tag">Sample loaded</span></span></div>
+      <details class="tpl" id="tplBox">
+        <summary>Get the prompt for ChatGPT or Claude</summary>
+        <div class="seg" style="margin-top:10px" role="group" aria-label="Prompt type">
+          <button type="button" id="tplNew" aria-pressed="true">New project</button>
+          <button type="button" id="tplUpd" aria-pressed="false">Change a project</button>
+        </div>
+        <pre id="tplText"></pre>
+        <div class="row" style="margin-top:10px"><button class="btn" id="copyTpl" type="button">Copy prompt</button></div>
+      </details>
+      <textarea id="manifest" spellcheck="false" aria-label="Manifest or chat reply" placeholder="Paste the AI's reply here, or drop a .txt file"></textarea>
+      <div class="callout info" id="convertBox" hidden>
+        <span>This looks like a normal chat reply, not a manifest. STEJECT can turn it into one by finding each file name and its code block.</span>
+        <div class="row"><button class="btn" id="convertBtn" type="button">Convert to manifest</button></div>
+      </div>
+      <div class="callout warn" id="fixBox" hidden>
+        <span id="fixText">The format is broken. Your local AI can try to repair it.</span>
+        <div class="row"><button class="btn ai" id="fixAiBtn" type="button">Fix with local AI</button><button class="btn" id="fixCancel" type="button" hidden>Stop</button></div>
+        <div class="progress" id="fixProg" hidden><div></div></div>
+      </div>
+      <div class="row">
+        <label class="btn filebtn">Open file<input id="fileIn" type="file" accept=".txt,.md,.markdown,text/plain"></label>
+        <button class="btn" id="loadSample" type="button">Load sample</button>
+        <button class="btn" id="undoBtn" type="button" hidden>Undo</button>
+        <button class="btn" id="clearBtn" type="button">Clear</button>
+      </div>
+      <div class="row" id="aiTools" hidden>
+        <button class="btn ai" id="aiReadme" type="button">Write README</button>
+        <button class="btn ai" id="aiPlan" type="button">Re-plan commits</button>
+        <span class="status" id="aiToolMsg" role="status"></span>
+      </div>
+    </section>
+
+    <!-- 2. INSPECT -->
+    <section class="panel inspect" aria-labelledby="h-insp">
+      <div class="step"><span class="n">2</span><h2 id="h-insp">Inspect</h2><span class="hint" id="projName"></span></div>
+      <div class="checks" id="checks"></div>
+      <div class="errors" id="errors"></div>
+      <div class="split">
+        <ol class="commits" id="commits" aria-label="Commit plan"></ol>
+        <div class="viewer">
+          <div class="bar">
+            <span class="path" id="vPath">No file selected</span>
+            <span class="row" style="gap:8px">
+              <span class="meta" id="vMeta"></span>
+              <span class="vtabs" id="vTabs" hidden>
+                <button type="button" id="vFile" aria-pressed="true">File</button>
+                <button type="button" id="vDiff" aria-pressed="false">Changes</button>
+              </span>
+            </span>
+          </div>
+          <div class="code" id="code"><div class="empty">Pick a file from the commit plan to read it.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. SHIP -->
+    <section class="panel ship" aria-labelledby="h-ship">
+      <div class="step"><span class="n">3</span><h2 id="h-ship">Push</h2></div>
+      <div class="seg" role="group" aria-label="Where to push">
+        <button type="button" id="modeNew" aria-pressed="true">New repo</button>
+        <button type="button" id="modeUpd" aria-pressed="false">Update a repo</button>
+        <button type="button" id="modeKit" aria-pressed="false">Ship kit</button>
+      </div>
+
+      <label class="override" id="overrideRow" hidden><input id="override" type="checkbox"> I checked the flagged lines. They are not real secrets. Push anyway.</label>
+
+      <div id="paneGh" class="stack">
+        <div class="acct off" id="acctBox">
+          <span class="who" id="acctText">GitHub is not connected.</span>
+          <button type="button" class="btn small" data-go="settings" data-focus="ghToken" id="acctBtn">Connect</button>
+        </div>
+
+        <div id="newFields" class="stack">
+          <label class="f" for="repoName">Repo name <small>Created for you if it doesn't exist.</small><input id="repoName" type="text" autocomplete="off" spellcheck="false"></label>
+          <label class="f" for="repoDesc">Description <small>Optional</small><input id="repoDesc" type="text" autocomplete="off" placeholder="What this project does"></label>
+          <div class="seg" role="radiogroup" aria-label="Visibility">
+            <label><input type="radio" name="vis" value="public" checked> Public</label>
+            <label><input type="radio" name="vis" value="private"> Private</label>
+          </div>
+        </div>
+
+        <div id="updFields" class="stack" hidden>
+          <label class="f" for="repoPick">Repository <small>Your repos, most recently pushed first.</small>
+            <select id="repoPick"><option value="">Connect GitHub to see your repos</option></select>
+          </label>
+          <div class="row"><button type="button" class="btn small" id="repoRefresh">Refresh list</button><span class="status" id="cmpMsg" role="status"></span></div>
+        </div>
+
+        <div class="callout warn" id="replaceBox" hidden>
+          <span id="replaceText"></span>
+          <div class="row"><button class="btn" id="replaceYes" type="button">Replace it and push</button><button class="btn" id="replaceNo" type="button">Cancel</button></div>
+        </div>
+
+        <div class="row">
+          <button class="btn primary" id="pushBtn" type="button">Push to GitHub</button>
+          <button class="btn" id="resumeBtn" type="button" hidden>Resume push</button>
+          <span class="note"><span class="kbd">Ctrl</span> + <span class="kbd">Enter</span></span>
+        </div>
+        <ul class="log" id="log" hidden aria-live="polite"></ul>
+        <div class="done" id="doneBox" hidden></div>
+      </div>
+
+      <div id="paneKit" class="stack" hidden>
+        <p class="note">No token? The ship kit builds the repo with Git on your computer instead.</p>
+        <label class="f" for="remote">GitHub repo URL <small>Create an empty repo on GitHub first. Leave blank to only build it locally.</small>
+          <input id="remote" type="url" placeholder="https://github.com/you/hello-app.git" autocomplete="off">
+        </label>
+        <div class="row">
+          <button class="btn primary" id="dlBtn" type="button">Download ship kit (.zip)</button>
+          <button class="btn" id="copyScript" type="button">Copy ship.sh</button>
+        </div>
+        <ol class="how">
+          <li>Unzip the kit and open a terminal in that folder. On Windows, use <strong>Git Bash</strong>.</li>
+          <li>Run <code>bash ship.sh</code></li>
+        </ol>
+      </div>
+      <p class="status" id="shipMsg" role="status"></p>
+      <p class="note" id="tgLine"></p>
+    </section>
+  </div>
+</main>
+
+<!-- ================================================================== LEARN -->
+<main class="wrap" id="page-learn" data-page="learn" hidden>
+  <div class="page-head">
+    <div>
+      <h1>Learn your project</h1>
+      <p>Understand the code before an interviewer asks about it. Explanations, a quiz and resume bullets, all from your local AI.</p>
+    </div>
+  </div>
+  <div class="callout warn" id="learnNoAi" hidden>
+    <span><strong>Local AI isn't set up yet.</strong> Install Ollama and pick a model in Settings. It's free and runs on your computer.</span>
+    <div class="row"><button class="btn" type="button" data-go="settings" data-focus="aiUrl">Set up local AI</button></div>
+  </div>
+  <div class="callout info" id="learnNoProj" hidden>
+    <span>Paste a valid manifest on the Ship page first. Learn works on that project.</span>
+    <div class="row"><button class="btn" type="button" data-go="ship">Go to Ship</button></div>
+  </div>
+  <div class="learn" id="learnBody">
+    <section class="panel">
+      <h3 class="k" id="learnProj">Project</h3>
+      <ul class="filelist" id="learnFiles"></ul>
+      <div class="stack">
+        <button class="btn ai" id="lExplain" type="button">Explain this file</button>
+        <button class="btn ai" id="lQuiz" type="button">Quiz me (5 questions)</button>
+        <button class="btn ai" id="lResume" type="button">Resume bullets</button>
+        <button class="btn" id="lStop" type="button" hidden>Stop</button>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="row" style="justify-content:space-between"><h3 class="k" id="learnTitle">Output</h3><button class="btn small" id="lCopy" type="button" hidden>Copy</button></div>
+      <div class="out" id="learnOut"><div class="empty">Pick a file and choose an action. Answers stream in here as your local AI writes them.</div></div>
+    </section>
+  </div>
+</main>
+
+<!-- ================================================================== HISTORY -->
+<main class="wrap" id="page-history" data-page="history" hidden>
+  <div class="page-head">
+    <div>
+      <h1>History</h1>
+      <p>Every project you've shipped from this computer.</p>
+    </div>
+    <button class="btn" id="histClear" type="button">Clear history</button>
+  </div>
+  <section class="panel">
+    <div class="tablewrap"><table class="hist" id="histTable"></table></div>
+    <div class="empty" id="histEmpty">Nothing shipped yet. Your pushes show up here with links to GitHub.</div>
+  </section>
+</main>
+
+<!-- ================================================================== SETTINGS -->
+<main class="wrap" id="page-settings" data-page="settings" hidden>
+  <div class="page-head">
+    <div>
+      <h1>Settings</h1>
+      <p id="storageNote">Tokens are stored on this computer only.</p>
+    </div>
+  </div>
+  <div class="settings">
+    <section class="panel" aria-labelledby="s-gh">
+      <h2 class="k" id="s-gh" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">GitHub</h2>
+      <div id="ghOut" class="stack">
+        <label class="f" for="ghToken">Personal access token
+          <small>Classic token with the <code>repo</code> scope. <a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=STEJECT" target="_blank" rel="noopener">Create one on GitHub</a></small>
+          <input id="ghToken" type="password" autocomplete="off" placeholder="ghp_...">
+        </label>
+        <div class="row">
+          <button class="btn primary" id="ghConnect" type="button">Connect</button>
+          <label class="cb"><input id="ghRemember" type="checkbox" checked> Remember on this computer</label>
+        </div>
+      </div>
+      <div id="ghIn" class="acct" hidden>
+        <span class="who">✓ Connected as <span id="ghLogin"></span></span>
+        <button id="ghDisconnect" class="btn small" type="button">Disconnect</button>
+      </div>
+      <p class="status" id="ghMsg" role="status"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="s-tg">
+      <h2 class="k" id="s-tg" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">Telegram alerts</h2>
+      <ol class="how">
+        <li>In Telegram, message <strong>@BotFather</strong>, send <code>/newbot</code>, and copy the token.</li>
+        <li>Open your new bot and send it any message.</li>
+        <li>Paste the token here and click <strong>Find my chat ID</strong>.</li>
+      </ol>
+      <div class="row">
+        <label class="f" for="tgToken">Bot token<input id="tgToken" type="password" autocomplete="off" placeholder="123456789:AA..."></label>
+        <label class="f" for="tgChat">Chat ID<input id="tgChat" type="text" autocomplete="off" placeholder="987654321"></label>
+      </div>
+      <div class="row">
+        <button class="btn" id="tgFind" type="button">Find my chat ID</button>
+        <button class="btn" id="tgTest" type="button">Send test message</button>
+        <label class="cb"><input id="tgOn" type="checkbox" checked> Alert after every push</label>
+      </div>
+      <p class="status" id="tgMsg" role="status"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="s-ai">
+      <h2 class="k" id="s-ai" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">Local AI (Ollama)</h2>
+      <p class="note">Free and private: the model runs on your computer. Used to fix broken manifests, write READMEs, and power the Learn page.</p>
+      <div class="callout warn" id="aiSetup" hidden>
+        <span><strong>Ollama isn't running.</strong> Install it from <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>, open it, then click Check again.</span>
+        <span id="aiBrowserHint" hidden>Using STEJECT in a browser? Ollama must allow this page. Quit Ollama, set the environment variable <code>OLLAMA_ORIGINS=*</code>, and start it again. The desktop app doesn't need this.</span>
+      </div>
+      <div class="row">
+        <label class="f" for="aiUrl">Ollama address<input id="aiUrl" type="url" value="http://localhost:11434" spellcheck="false"></label>
+      </div>
+      <div class="row"><button class="btn" id="aiCheck" type="button">Check again</button><span class="status" id="aiMsg" role="status"></span></div>
+      <h3 class="k">Model</h3>
+      <div class="models" id="aiModels"></div>
+      <div class="stack" id="pullBox" hidden>
+        <div class="row" style="justify-content:space-between"><span class="note" id="pullText"></span><button class="btn small" id="pullStop" type="button">Stop</button></div>
+        <div class="progress"><div id="pullBar"></div></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="s-app">
+      <h2 class="k" id="s-app" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">App</h2>
+      <div class="stack">
+        <span style="font-size:13px;font-weight:600">Theme</span>
+        <div class="seg" role="group" aria-label="Theme">
+          <button type="button" data-theme-set="system" aria-pressed="true">System</button>
+          <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+          <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+        </div>
+      </div>
+      <p class="note" id="aboutLine">STEJECT</p>
+      <div class="row">
+        <a class="btn small" id="repoLink" href="https://github.com" target="_blank" rel="noopener" hidden>Source on GitHub</a>
+        <button class="btn small" id="checkUpd" type="button" hidden>Check for updates</button>
+        <button class="btn small danger" id="resetAll" type="button">Remove all saved data</button>
+      </div>
+      <div class="callout warn" id="resetBox" hidden>
+        <span>This deletes your saved tokens, settings and history from this computer.</span>
+        <div class="row"><button class="btn danger" id="resetYes" type="button">Delete everything</button><button class="btn" id="resetNo" type="button">Cancel</button></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="js/build-info.js"></script>
+<script src="js/core.js"></script>
+<script src="js/github.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

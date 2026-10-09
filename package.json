@@ -1,0 +1,119 @@
+{
+  "name": "steject",
+  "productName": "STEJECT",
+  "version": "1.0.0",
+  "description": "Turn a project written by ChatGPT or Claude into a real GitHub repo with real commits.",
+  "main": "electron/main.js",
+  "author": {
+    "name": "Aadvik",
+    "email": "steject@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/aadvik7/steject",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aadvik7/steject.git"
+  },
+  "keywords": [
+    "github",
+    "git",
+    "chatgpt",
+    "claude",
+    "ollama",
+    "students",
+    "portfolio"
+  ],
+  "scripts": {
+    "start": "node scripts/build-info.js && electron .",
+    "test": "node --test test/core.test.js",
+    "test:e2e": "node test/e2e.mock.js",
+    "icons": "python3 scripts/make-icons.py",
+    "dist": "node scripts/build-info.js && electron-builder --publish never",
+    "test:desktop": "node test/electron.smoke.js",
+    "test:all": "npm test && npm run test:e2e && npm run test:desktop"
+  },
+  "devDependencies": {
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
+    "playwright": "^1.63.0"
+  },
+  "build": {
+    "appId": "dev.steject.app",
+    "productName": "STEJECT",
+    "copyright": "MIT License",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "app/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "artifactName": "STEJECT-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "portable": {
+      "artifactName": "STEJECT-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "STEJECT"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "identity": null
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "maintainer": "Aadvik <steject@users.noreply.github.com>",
+      "synopsis": "Chat-made projects to real GitHub repos",
+      "syncDesktopName": true
+    }
+  },
+  "desktopName": "steject.desktop"
+}

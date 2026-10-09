@@ -1,0 +1,109 @@
+# Builds the desktop installers and publishes them as a GitHub Release.
+# Trigger: push a tag like v1.0.0  (git tag v1.0.0 && git push origin v1.0.0)
+# or run it by hand from the Actions tab.
+name: Release desktop app
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (like 1.0.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test test/core.test.js
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Set version
+        shell: bash
+        run: |
+          V="${{ github.event.inputs.version }}"
+          if [ -z "$V" ]; then V="${GITHUB_REF_NAME#v}"; fi
+          npm version "$V" --no-git-tag-version --allow-same-version
+          node scripts/build-info.js
+
+      - name: Build installers
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --publish never
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: Tag name
+        id: tag
+        shell: bash
+        run: |
+          V="${{ github.event.inputs.version }}"
+          if [ -n "$V" ]; then echo "name=v$V" >> "$GITHUB_OUTPUT"; else echo "name=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: STEJECT ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          files: installers/*
+          body: |
+            ## Download
+
+            | Your computer | File |
+            |---|---|
+            | Windows | `STEJECT-…-win-x64.exe` (installer) or `STEJECT-…-portable.exe` (no install) |
+            | Mac (Apple chip M1–M4) | `STEJECT-…-mac-arm64.dmg` |
+            | Mac (Intel) | `STEJECT-…-mac-x64.dmg` |
+            | Linux | `STEJECT-…-linux-x86_64.AppImage` or `.deb` |
+
+            **First launch:** the app isn't code-signed yet, so your computer will warn you once.
+            - **Windows:** click *More info* → *Run anyway*.
+            - **Mac:** right-click the app → *Open* → *Open*. If it says the app is damaged, run `xattr -cr /Applications/STEJECT.app` in Terminal.
+            - **Linux (AppImage):** right-click → Properties → allow executing, or `chmod +x STEJECT-*.AppImage`.

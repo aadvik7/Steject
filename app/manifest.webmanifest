@@ -1,0 +1,17 @@
+{
+  "name": "STEJECT",
+  "short_name": "STEJECT",
+  "description": "Turn a project written by ChatGPT or Claude into a real GitHub repo with real commits.",
+  "start_url": "./#ship",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d1522",
+  "theme_color": "#142033",
+  "categories": ["developer", "productivity", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

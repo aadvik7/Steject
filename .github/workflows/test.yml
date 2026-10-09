@@ -1,0 +1,26 @@
+# Runs every test on each push and pull request.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Install Chromium for UI tests
+        run: npx playwright install --with-deps chromium
+      - name: UI tests (mocked GitHub, Telegram, Ollama)
+        run: npm run test:e2e
+      - name: Desktop app smoke test
+        run: xvfb-run -a npm run test:desktop
