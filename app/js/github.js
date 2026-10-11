@@ -23,7 +23,7 @@
           method,
           headers: {
             "Accept": "application/vnd.github+json",
-            "Authorization": "Bearer " + token,
+            ...(token ? { "Authorization": "Bearer " + token } : {}),   // public repos can be read without one
             "X-GitHub-Api-Version": "2022-11-28",
             ...(body ? { "Content-Type": "application/json" } : {}),
           },
@@ -39,6 +39,7 @@
       if (!res.ok) {
         const msg = (data && data.message) || res.statusText || "Request failed";
         if (res.status === 401) throw new GhError(401, "GitHub rejected the token. It may be wrong, expired or revoked.");
+        if (/workflow/i.test(msg) && /scope|permission|refusing|allow/i.test(msg)) throw new GhError(res.status, "Your token can't add or change GitHub Actions files (.github/workflows). Create a token with the repo and workflow scopes, or leave out the CI file.");
         if ((res.status === 403 || res.status === 429) && /rate limit/i.test(msg)) throw new GhError(429, "GitHub rate limit reached. Wait a few minutes and try again.");
         if (res.status === 403) throw new GhError(403, "Your token doesn't have permission for this. Use a classic token with the repo scope.");
         throw new GhError(res.status, msg);
@@ -188,6 +189,22 @@
     if (!ctx.made.length) {
       return { status: "done", url: ctx.url, full: ctx.full, commits: 0, nothing: true };
     }
+    // pull request mode: the commits go to a new branch, and main is left alone
+    if (job.pr && job.mode === "update") {
+      const head = job.pr.branch;
+      log.run("ref", `Creating branch ${head}`);
+      try {
+        await req(`${base}/git/refs`, { method: "POST", body: { ref: "refs/heads/" + head, sha: ctx.parent } });
+      } catch (e) {
+        if (e.status === 422) throw new GhError(422, `A branch called ${head} already exists on ${ctx.full}. Pick another branch name.`);
+        throw e;
+      }
+      log.update("ref", "ok", `${head} → ${ctx.parent.slice(0, 7)}`);
+      log.run("pr", `Opening a pull request into ${ctx.branch}`);
+      const pr = await req(`${base}/pulls`, { method: "POST", body: { title: job.pr.title || manifest.commits[manifest.commits.length - 1].message, head, base: ctx.branch, body: job.pr.body || "", maintainer_can_modify: true } });
+      log.update("pr", "ok", `Pull request #${pr.number} opened`);
+      return { status: "done", url: pr.html_url, full: ctx.full, commits: ctx.made.length, pr: { number: pr.number, url: pr.html_url, branch: head } };
+    }
     log.run("ref", `Updating ${ctx.branch}`);
     try {
       await req(`${base}/git/refs/heads/${encodeURIComponent(ctx.branch)}`, { method: "PATCH", body: { sha: ctx.parent, force: !ctx.fastForward } });
@@ -204,7 +221,49 @@
     await req(`/repos/${full}/contents/.steject`, { method: "PUT", body: { message: "Initialize", content: b64("") } });
   }
 
-  const api = { GhError, me, listRepos, repoState, readFile, ship, b64, unb64 };
+  /**
+   * Read a repo's text files (to explain, improve or extend it).
+   * Returns {files: Map(path -> text), skipped: {folder, binary, large, limit}, branch, head}.
+   */
+  async function importRepo(token, full, opts) {
+    opts = opts || {};
+    const C = root.SteCore, L = C.IMPORT_LIMITS;
+    const { req, retry } = client(token);
+    const repo = await req(`/repos/${full}`);
+    const branch = repo.default_branch || "main";
+    let ref;
+    try { ref = await req(`/repos/${full}/git/ref/heads/${encodeURIComponent(branch)}`); }
+    catch (e) { if (e.status === 409 || e.status === 404) return { files: new Map(), skipped: {}, branch, head: null, full: repo.full_name }; throw e; }
+    const commit = await req(`/repos/${full}/git/commits/${ref.object.sha}`);
+    const tree = await req(`/repos/${full}/git/trees/${commit.tree.sha}?recursive=1`);
+    const skipped = { folder: 0, binary: 0, large: 0, path: 0, limit: 0 };
+    const want = [];
+    let bytes = 0;
+    for (const e of tree.tree) {
+      if (e.type !== "blob") continue;
+      const why = C.skipReason(e.path, e.size || 0);
+      if (why) { skipped[why]++; continue; }
+      if (want.length >= L.files || bytes + (e.size || 0) > L.totalBytes) { skipped.limit++; continue; }
+      want.push(e); bytes += e.size || 0;
+    }
+    const files = new Map(), queue = want.slice();
+    let done = 0;
+    await Promise.all(Array.from({ length: 6 }, async () => {
+      while (queue.length) {
+        const e = queue.shift();
+        const b = await retry(() => req(`/repos/${full}/git/blobs/${e.sha}`));
+        let text;
+        try { text = unb64(b.content || ""); } catch { text = null; }
+        if (text == null || text.includes("\u0000")) skipped.binary++;
+        else files.set(e.path, text);
+        opts.onProgress && opts.onProgress(++done, want.length);
+      }
+    }));
+    const sorted = new Map([...files].sort((a, b) => a[0] < b[0] ? -1 : 1));
+    return { files: sorted, skipped, branch, head: ref.object.sha, full: repo.full_name };
+  }
+
+  const api = { GhError, me, listRepos, repoState, readFile, ship, importRepo, b64, unb64 };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.SteGitHub = api;
 })(typeof self !== "undefined" ? self : this);

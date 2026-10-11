@@ -14,5 +14,6 @@ contextBridge.exposeInMainWorld("steNative", {
   copy: text => ipcRenderer.invoke("copy", text),
   setTheme: theme => ipcRenderer.invoke("theme", theme),
   info: () => ipcRenderer.invoke("info"),
+  allowHost: url => ipcRenderer.invoke("net:allow", url),
   onMenu: cb => { ipcRenderer.on("menu", (_e, cmd) => cb(cmd)); },
 });

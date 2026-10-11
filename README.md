@@ -26,12 +26,18 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **Update mode:** paste changes for an existing repo. STEJECT shows what's new, changed or deleted compared with GitHub, then adds commits on top. It never overwrites history.
 - **Resume:** if your internet drops mid-push, continue from where it stopped.
 - **Telegram alerts:** get a message when a push succeeds or fails.
-- **Start from an idea:** describe a project in a sentence and the AI writes it for you, ready to inspect and push.
+- **Start from an idea, plan first:** describe a project (or pick one of 18 starters) and the AI proposes a file tree and commit plan. Edit it, approve it, and only then are the files written.
+- **Check it runs, and fix it:** Python tests or the main script run in the browser, and web pages open in a sandbox. If it fails, the error goes back to the AI to fix, up to 3 tries.
+- **Live preview:** web projects show in a sandboxed preview tab with no network access.
+- **Change it by chatting:** type "add a delete command" and get only the changed files as a new commit, with a diff.
+- **Open an existing project:** a local folder or a GitHub repo, to explain, improve or extend it.
+- **Pull requests:** push to a new branch and open a PR instead of writing to main.
+- **Repo polish pack:** LICENSE, .gitignore, issue templates, a CI workflow, and AGENTS.md + CLAUDE.md for AI coding tools.
 - **AI helper, your choice:**
   - **Free cloud (Groq):** paste a free API key and it works in a minute. Your text goes to Groq.
   - **Ollama:** free and private, running on your computer.
-  - Both can write projects from ideas, fix broken manifests, write a README and re-plan commits.
-- **Learn mode:** explains every file the way an interviewer would ask about it, quizzes you on your own code, and writes resume bullets.
+  - **Any OpenAI-style service:** OpenRouter, Google Gemini, LM Studio or your college's server, with a usage counter for free-tier limits.
+- **Learn mode:** explains every file the way an interviewer would ask about it, quizzes you, runs a mock interview, and writes resume bullets. An optional **understanding gate** makes you pass before you push, and can add your score to the README.
 - **History:** every project you've shipped, with links.
 - **Ship kit:** no token? Download a script that builds the repo with Git on your computer.
 
@@ -59,11 +65,11 @@ Prefer the browser? The web version runs on this repo's GitHub Pages site and ca
 
 ## First run (5 minutes)
 
-1. **GitHub:** Settings → paste a [classic token with the `repo` scope](https://github.com/settings/tokens/new?scopes=repo&description=STEJECT) → Connect.
+1. **GitHub:** Settings → paste a [classic token with the `repo` and `workflow` scopes](https://github.com/settings/tokens/new?scopes=repo,workflow&description=STEJECT) → Connect. (`workflow` is only needed to push CI files.)
 2. **Telegram (optional):** create a bot with @BotFather, paste its token, click *Find my chat ID*, then *Send test message*.
-3. **AI helper (optional):** either paste a free key from [console.groq.com/keys](https://console.groq.com/keys) in Settings → AI helper → *Free cloud (Groq)*, or install [Ollama](https://ollama.com/download) and click *Download* next to `qwen2.5-coder:3b`.
+3. **AI helper (optional):** paste a free key from [console.groq.com/keys](https://console.groq.com/keys) in Settings → AI helper → *Free cloud (Groq)*, install [Ollama](https://ollama.com/download) and click *Download* next to `qwen2.5-coder:3b`, or add any OpenAI-style service under *Other*.
 
-Then copy the prompt from the Ship page into ChatGPT or Claude, paste the reply, and click Push.
+Then either open **Start from an idea** (AI helper needed), or copy the prompt from the Ship page into ChatGPT or Claude, paste the reply, and click Push.
 
 ## The manifest format
 
@@ -83,8 +89,9 @@ Files and deletes belong to the next `COMMIT` line. Full prompts: [PROMPT_TEMPLA
 ## Privacy and safety
 
 - Tokens are encrypted with your operating system's keychain (desktop app) and stored only on your computer.
-- Network access is limited to `api.github.com`, `api.telegram.org`, `api.groq.com` (only if you add a Groq key) and your local Ollama. Anything else is blocked by the app's security policy.
-- With Groq, the ideas and project text you use AI on are sent to Groq. Use Ollama for code that must stay private.
+- STEJECT talks to GitHub, Telegram, the AI service you choose (Groq, or an https address you add yourself) and your local Ollama or LM Studio. The app's security policy allows https and this computer only; plain http to other computers is blocked.
+- With a cloud AI, the ideas and project text you use AI on are sent to that service. Use Ollama for code that must stay private.
+- *Check it runs* never runs AI-written code with access to your tokens. Python runs in a separate Web Worker using [Pyodide](https://pyodide.org) (downloaded once from jsDelivr, about 10 MB). Web projects open in a sandboxed frame that has no network access at all.
 - Pushing stops if a possible secret is found: GitHub, AWS, OpenAI-style, Groq, Google, Hugging Face, npm, Slack or Stripe keys, private keys, or hardcoded passwords.
 - STEJECT never force-pushes over existing history. Replacing GitHub's single "Initial commit" requires your confirmation.
 
@@ -94,7 +101,7 @@ Files and deletes belong to the next `COMMIT` line. Full prompts: [PROMPT_TEMPLA
 npm install
 npm start              # run the desktop app
 npm test               # unit tests
-npm run test:e2e       # UI tests against mocked GitHub, Telegram and Ollama
+npm run test:e2e       # UI tests against mocked GitHub, Telegram, Groq, Pyodide and Ollama
 npm run test:desktop   # desktop app smoke test (use xvfb-run on Linux servers)
 npm run dist           # build installers for your OS into dist/
 ```
@@ -103,10 +110,14 @@ The app is plain HTML, CSS and JavaScript in `app/` with no build step. `electro
 
 ```
 app/            the app (also served as the web version)
-  js/core.js    manifest parser, chat-reply converter, secret scan, diff
-  js/github.js  GitHub API: create repo, push, update, resume
-  js/ai.js      Ollama and Telegram clients, AI prompts
+  js/core.js    manifest parser, converter, secret scan, diff, plans, polish pack
+  js/github.js  GitHub API: create repo, push, update, resume, import, pull requests
+  js/ai.js      Ollama, Groq and OpenAI-style clients, Telegram, AI prompts
+  js/runner.js  "check it runs": Python worker + sandboxed web preview
+  js/pyworker.js  Pyodide runner (Web Worker)
   js/app.js     UI controller
+  preview.html  sandboxed page for web project previews
+  starters/     starter gallery (contributions welcome)
 electron/       desktop wrapper (main process + preload bridge)
 test/           unit, UI and desktop tests
 ```
@@ -115,9 +126,12 @@ test/           unit, UI and desktop tests
 
 - [ ] Image and binary files in projects
 - [ ] Sign installers so there's no first-run warning
-- [ ] Run the project's tests before pushing (desktop app)
-- [ ] More AI providers (LM Studio, OpenAI-compatible servers)
+- [ ] Check Node.js, Java and Go projects (today: Python and web pages)
 - [ ] Ship an idea in one click (write, check and push without stopping at Inspect)
+
+### Add a starter idea
+
+Starters live in [`app/starters/starters.js`](app/starters/starters.js). Add one object (level, language, size, title, idea) and open a pull request.
 
 ## License
 

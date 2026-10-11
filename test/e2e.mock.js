@@ -24,7 +24,8 @@ const ok = (c, m) => { if (c) console.log("ok -", m); else { failures++; console
 const TOKEN = "ghp_" + "t".repeat(36);
 const sha = () => crypto.randomBytes(20).toString("hex");
 const repos = {};
-let failNextCommitPost = 0, passBeforeFail = 0, lastPatch = null;
+let failNextCommitPost = 0, passBeforeFail = 0, lastPatch = null, noWorkflowScope = false, prs = [];
+const blobIds = new Map(); let blobSeq = 0;
 function mkRepo(full, files, n) {
   const [owner, name] = full.split("/");
   const r = { owner, name, commits: {}, trees: {}, blobs: {}, ref: null, branch: "main" };
@@ -59,7 +60,18 @@ async function gh(route) {
   if (rest === "") return send(200, rj(r));
   if (rest === "/git/ref/heads/main") return r.ref ? send(200, { object: { sha: r.ref } }) : send(409, { message: "Git Repository is empty." });
   if (rest.startsWith("/git/commits/") && m === "GET") { const c = r.commits[rest.split("/").pop()]; return c ? send(200, { sha: rest.split("/").pop(), tree: { sha: c.tree }, message: c.message }) : send(404, {}); }
-  if (rest.startsWith("/git/trees/") && m === "GET") { const t = r.trees[rest.split("/").pop()]; return send(200, { tree: Object.keys(t).map(k => ({ path: k, type: "blob" })) }); }
+  if (rest.startsWith("/git/trees/") && m === "GET") {
+    const t = r.trees[rest.split("/").pop().split("?")[0]];
+    return send(200, { tree: Object.keys(t).map(k => { const id = "bb" + (++blobSeq); blobIds.set(id, String(t[k] || "")); return { path: k, type: "blob", sha: id, size: String(t[k] || "").length }; }) });
+  }
+  if (rest.startsWith("/git/blobs/") && m === "GET") { const c = blobIds.get(rest.split("/").pop()); return c == null ? send(404, {}) : send(200, { encoding: "base64", content: Buffer.from(c).toString("base64") }); }
+  if (rest === "/git/refs" && m === "POST") {
+    const name = body.ref.replace("refs/heads/", "");
+    r.branches = r.branches || {};
+    if (r.branches[name]) return send(422, { message: "Reference already exists" });
+    r.branches[name] = body.sha; return send(201, { ref: body.ref, object: { sha: body.sha } });
+  }
+  if (rest === "/pulls" && m === "POST") { const pr = { number: prs.length + 1, html_url: `https://github.com/${r.owner}/${r.name}/pull/${prs.length + 1}`, ...body }; prs.push(pr); return send(201, pr); }
   if (rest === "/commits") { if (!r.ref) return send(409, { message: "Git Repository is empty." }); return send(200, hist(r).slice(0, +u.searchParams.get("per_page") || 30).map(c => ({ sha: c, commit: { message: r.commits[c].message } }))); }
   if (rest.startsWith("/contents/") && m === "GET") {
     const fp = decodeURIComponent(rest.slice(10)); const t = treeOf(r);
@@ -85,6 +97,7 @@ async function gh(route) {
   }
   if (rest === "/git/refs/heads/main" && m === "PATCH") {
     lastPatch = body;
+    if (noWorkflowScope && Object.keys(r.trees[r.commits[body.sha].tree] || {}).some(k => k.startsWith(".github/workflows/"))) return send(404, { message: "refusing to allow a Personal Access Token to create or update workflow `.github/workflows/ci.yml` without `workflow` scope" });
     if (!body.force && r.ref && !isAncestor(r, r.ref, body.sha)) return send(422, { message: "Update is not a fast forward" });
     r.ref = body.sha; return send(200, {});
   }
@@ -131,6 +144,48 @@ async function groqMock(route) {
   return route.fulfill({ status: 404, headers: json, body: "{}" });
 }
 
+// ------------------------------------------------------------------ Pyodide mock (the real one is checked by hand; see docs)
+// The fake loadPyodide asks the test what each run should return, so the self-check loop can be scripted.
+let pyPlan = [], pyRuns = 0;
+const FAKE_PYODIDE = `self.loadPyodide = async () => {
+  let out = () => {};
+  return {
+    FS: { mkdirTree() {}, writeFile() {} },
+    setStdout(o) { out = o.batched; }, setStderr() {}, setStdin() {},
+    loadPackage: async () => {}, pyimport: () => ({ install: async () => {} }),
+    globals: { set() {} },
+    runPythonAsync: async () => {
+      const r = await (await fetch("https://cdn.jsdelivr.net/pyodide/__mock__/next")).json();
+      if (r.output) out(r.output);
+      return JSON.stringify({ status: r.status, detail: r.detail || "" });
+    },
+  };
+};`;
+async function pyodideMock(route) {
+  const u = new URL(route.request().url());
+  const cors = { "access-control-allow-origin": "*" };
+  if (u.pathname.endsWith("/__mock__/next")) { pyRuns++; return route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify(pyPlan.length ? pyPlan.shift() : { status: "pass" }) }); }
+  if (u.pathname.endsWith("/pyodide.js")) return route.fulfill({ status: 200, headers: { ...cors, "content-type": "text/javascript" }, body: FAKE_PYODIDE });
+  return route.fulfill({ status: 404, headers: cors, body: "" });
+}
+
+// ------------------------------------------------------------------ any OpenAI-style provider (custom address)
+let customCalls = [];
+async function customMock(route) {
+  const req = route.request(), u = new URL(req.url());
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" };
+  if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+  if (u.pathname === "/v1/models") return route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify({ data: [{ id: "tiny-coder" }, { id: "big-coder" }] }) });
+  if (u.pathname === "/v1/chat/completions") {
+    customCalls.push({ auth: req.headers()["authorization"], body: JSON.parse(req.postData()) });
+    const sse = "data: " + JSON.stringify({ choices: [{ delta: { content: "## What it does\nHello from a custom provider." } }] }) + "\n\n"
+      + "data: " + JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }) + "\n\n"
+      + "data: " + JSON.stringify({ choices: [], usage: { prompt_tokens: 30, completion_tokens: 12, total_tokens: 42 } }) + "\n\ndata: [DONE]\n\n";
+    return route.fulfill({ status: 200, headers: { ...cors, "content-type": "text/event-stream" }, body: sse });
+  }
+  return route.fulfill({ status: 404, headers: cors, body: "{}" });
+}
+
 (async () => {
   await new Promise(r => server.listen(0, r));
   const base = `http://localhost:${server.address().port}/`;
@@ -139,6 +194,8 @@ async function groqMock(route) {
   await ctx.route("https://api.github.com/**", gh);
   await ctx.route("http://localhost:11434/**", ollama);
   await ctx.route("https://api.groq.com/**", groqMock);
+  await ctx.route("https://cdn.jsdelivr.net/pyodide/**", pyodideMock);
+  await ctx.route("https://ai.example.test/**", customMock);
   await ctx.route("https://api.telegram.org/**", route => {
     const r = route.request(); const cors = { "access-control-allow-origin": "*", "content-type": "application/json" };
     if (r.url().endsWith("/getUpdates")) return route.fulfill({ status: 200, headers: cors, body: JSON.stringify({ ok: true, result: [{ message: { chat: { id: 4242, first_name: "Aadvik" } } }] }) });
@@ -148,7 +205,7 @@ async function groqMock(route) {
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
-  page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|favicon/.test(m.text())) errors.push(m.text()); });
+  page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|favicon/.test(m.text()) && !/^$|preview\.html|about:srcdoc|^blob:/.test((m.location() || {}).url || "")) errors.push(m.text()); });   // the sandboxed project's own console
   await page.goto(base);
   await page.waitForTimeout(500);
   const shot = async o => { await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(80); return page.screenshot(o); };
@@ -285,37 +342,178 @@ async function groqMock(route) {
   ok(gm.includes("llama-3.3-70b-versatile") && gm.includes("In use") && !gm.includes("whisper"), "Groq: chat models listed, default in use, speech models hidden");
   await shot({ path: `${OUT}/9-groq-settings.png`, fullPage: true });
 
-  // ---- 9d. idea to project (first reply broken, second reply good: repair loop)
+  // ---- 9d. starter gallery, then idea → plan → edit → approve → write (with the repair loop and the self-check fix loop)
   await page.click('nav [data-go="ship"]');
   await page.click("#ideaBox summary");
+  ok((await page.$$("#starterList .starter")).length >= 15, "starter gallery lists the starters");
+  await page.click('#starterLvl [data-lvl="advanced"]');
+  ok((await page.$$("#starterList .starter")).length >= 4 && !(await page.textContent("#starterList")).includes("Number guessing"), "starter gallery filters by level");
+  await page.click('#starterLvl [data-lvl="all"]');
+  await page.click('[data-starter="todo-cli"]');
+  ok((await page.inputValue("#ideaText")).includes("to-do app"), "starter fills the idea box in one click");
   ok(!(await page.isDisabled("#ideaGo")), "idea box enabled once an AI helper is ready");
+
+  const PLAN = JSON.stringify({ project: "todo-cli", summary: "A to-do list for the terminal.", commits: [
+    { message: "Add todo core", files: [{ path: "todo.py", purpose: "task functions" }] },
+    { message: "Add tests", files: [{ path: "test_todo.py", purpose: "pytest tests" }] },
+    { message: "Add README", files: [{ path: "README.md", purpose: "how to run" }, { path: ".gitignore", purpose: "ignore caches" }] },
+  ] });
   const good = "=== PROJECT: todo-cli ===\n=== FILE: todo.py ===\nimport json\n\ndef add(items, text):\n    items.append(text)\n    return items\n=== COMMIT: Add todo core ===\n=== FILE: test_todo.py ===\nfrom todo import add\n\ndef test_add():\n    assert add([], 'a') == ['a']\n=== COMMIT: Add tests ===\n=== FILE: README.md ===\n# todo-cli\n=== COMMIT: Add README ===";
-  groqCalls = []; groqPlan = [{ text: "Sure! Here is your project:\n\ntodo.py\nimport json" }, { text: good }];
-  await page.fill("#ideaText", "A Python command-line to-do app with tests");
+  groqCalls = []; groqPlan = [{ text: PLAN }];
   await page.click("#ideaGo");
-  await page.waitForFunction(() => /Done:/.test(document.querySelector("#ideaMsg").textContent), null, { timeout: 15000 });
-  ok(groqCalls.length === 2, "idea: broken first reply was sent back for repair (2 calls)");
-  ok(JSON.stringify(groqCalls[1].messages.map(m => m.role)) === '["system","user","assistant","user"]' && /problem/.test(groqCalls[1].messages[3].content), "idea: repair request includes the parse error");
-  ok(groqCalls[0].model === "llama-3.3-70b-versatile" && groqCalls[0].stream === true && groqCalls[0].max_tokens === 4500, "idea: request uses the chosen model, streaming and a token cap");
-  ok((await page.textContent("#projName")).includes("todo-cli") && (await page.textContent("#checks")).includes("Valid"), "idea: project appears as a valid manifest");
-  ok(await page.isVisible("#undoBtn"), "idea: undo offered");
-  await shot({ path: `${OUT}/10-idea.png`, fullPage: true });
+  await page.waitForSelector("#planBox:not([hidden])", { timeout: 8000 });
+  ok(groqCalls.length === 1 && groqCalls[0].response_format && groqCalls[0].response_format.type === "json_object", "plan: asked for a JSON plan first (no code yet)");
+  ok((await page.$$("#planList .pf")).length === 4 && (await page.inputValue("#planName")) === "todo-cli", "plan: editable file tree with 4 files in 3 commits");
+  await page.fill('#planList > li[data-c="0"] .pcm', "Add the core");
+  await page.click('#planList > li[data-c="2"] .pf[data-f="1"] [data-act="delf"]');
+  ok((await page.$$("#planList .pf")).length === 3 && (await page.textContent("#planCount")).includes("3 files"), "plan: student removed a file and renamed a commit");
+  await shot({ path: `${OUT}/10-plan.png`, fullPage: true });
+
+  // write: first reply broken (repair loop), second good; then tests fail once, the AI fixes todo.py, tests pass
+  const fixed = "=== FILE: todo.py ===\nimport json\n\ndef add(items, text):\n    items = list(items)\n    items.append(text)\n    return items\n=== COMMIT: Fix add ===";
+  groqCalls = []; pyRuns = 0;
+  groqPlan = [{ text: "Sure! Here is your project:\n\ntodo.py\nimport json" }, { text: good }, { text: fixed }];
+  pyPlan = [{ status: "fail", output: "FAILED test_todo.py::test_add - AssertionError" }, { status: "pass", output: "1 passed" }];
+  await page.click("#planWrite");
+  await page.waitForFunction(() => /Tests pass/.test(document.querySelector("#runMsg").textContent), null, { timeout: 20000 });
+  ok(groqCalls.length === 3, "write: broken reply repaired, then one AI fix (3 AI calls)");
+  ok(/Add the core/.test(groqCalls[0].messages[1].content) && !/\.gitignore/.test(groqCalls[0].messages[1].content), "write: the prompt uses the edited plan");
+  ok(JSON.stringify(groqCalls[1].messages.map(m => m.role)) === '["system","user","assistant","user"]' && /problem/.test(groqCalls[1].messages[3].content), "write: repair request includes the parse error");
+  ok(groqCalls[0].model === "llama-3.3-70b-versatile" && groqCalls[0].stream === true && groqCalls[0].max_tokens === 5000, "write: chosen model, streaming and a token cap");
+  ok(/FAILED test_todo\.py/.test(groqCalls[2].messages[1].content), "self-check: the failing output was sent to the AI");
+  ok(pyRuns === 2 && /after 1 AI fix/.test(await page.textContent("#runMsg")), "self-check: tests ran, failed, got fixed, then passed");
+  ok(await page.evaluate(() => JSON.stringify(window.__steject.S.m.commits.map(c => c.message))) === '["Add the core","Add tests","Add README"]', "write: commits follow the approved plan; the fix went into the existing commit");
+  ok((await page.textContent("#checks")).includes("Runs") && (await page.textContent("#checks")).includes("Yes"), "Inspect shows Runs: Yes");
+  ok((await page.textContent("#commits")).includes("changed") && await page.isVisible("#undoBtn"), "the AI's fix is badged as changed, with undo");
+  await shot({ path: `${OUT}/11-checked.png`, fullPage: true });
 
   // ---- 9e. Groq limits: short wait then success; daily limit message; cut-off reply
   groqCalls = [];
-  groqPlan = [{ status: 429, message: "Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_x` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 11000, Requested 3000. Please try again in 1.2s. Need more tokens?" }, { text: good }];
+  groqPlan = [{ status: 429, message: "Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_x` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 11000, Requested 3000. Please try again in 1.2s. Need more tokens?" }, { text: PLAN }];
   await page.fill("#ideaText", "Another small to-do app");
   await page.click("#ideaGo");
-  await page.waitForFunction(() => /Done:/.test(document.querySelector("#ideaMsg").textContent), null, { timeout: 15000 });
+  await page.waitForSelector("#planBox:not([hidden])", { timeout: 15000 });
   ok(groqCalls.length === 2, "rate limit (per minute): waited the time Groq asked for, then succeeded");
   groqPlan = [{ status: 429, message: "Rate limit reached for model `x` on tokens per day (TPD): Limit 100000, Used 99000, Requested 3000. Please try again in 7m12s." }];
-  await page.click("#ideaGo"); await page.waitForTimeout(500);
+  await page.click("#planRedo"); await page.waitForTimeout(500);
   ok((await page.textContent("#ideaMsg")).includes("today's free Groq limit"), "rate limit (per day): plain-words message, no waiting");
   groqPlan = [{ text: good.slice(0, 120), finish: "length" }];
-  await page.click("#ideaGo"); await page.waitForTimeout(600);
+  await page.click("#planWrite"); await page.waitForTimeout(600);
   ok((await page.textContent("#ideaMsg")).includes("cut off"), "cut-off reply: explained instead of a half project");
+  await page.click("#planCancel");
 
-  // ---- 9f. Learn through Groq
+  // ---- 9f. change it with AI: only the changed files come back, as a new commit with a diff
+  await page.fill("#manifest", good); await page.waitForTimeout(300);
+  groqCalls = []; groqPlan = [{ text: "=== FILE: todo.py ===\nimport json\n\ndef add(items, text):\n    items.append(text)\n    return items\n\ndef remove(items, text):\n    return [i for i in items if i != text]\n=== COMMIT: Add a remove command ===" }];
+  await page.fill("#chatText", "add a command to remove a task");
+  await page.press("#chatText", "Enter");
+  await page.waitForFunction(() => /Done:/.test(document.querySelector("#aiToolMsg").textContent), null, { timeout: 8000 });
+  ok(/add a command to remove a task/.test(groqCalls[0].messages[1].content) && /--- todo\.py ---/.test(groqCalls[0].messages[1].content), "change: the request and the project's code go to the AI");
+  ok(await page.evaluate(() => window.__steject.S.m.commits.length) === 4 && (await page.textContent("#commits")).includes("Add a remove command"), "change: added as a new commit");
+  ok((await page.getAttribute("#vDiff", "aria-pressed")) === "true" && (await page.textContent("#vMeta")).startsWith("+"), "change: the diff opens on the changed file");
+  ok((await page.textContent("#checks")).includes("Last AI change") && (await page.textContent("#aiToolMsg")).includes("changed 1 file"), "change: Inspect summarises what changed");
+
+  // ---- 9g. repo polish pack
+  await page.click("#polishBox summary");
+  await page.check("#plCi"); await page.check("#plAgents"); await page.check("#plIssues");
+  await page.click("#plAdd");
+  const polished = await page.evaluate(() => [...window.__steject.S.m.commits.at(-1).files.keys()].sort().join(","));
+  ok(polished === ".github/ISSUE_TEMPLATE/bug_report.md,.github/ISSUE_TEMPLATE/feature_request.md,.github/workflows/ci.yml,.gitignore,AGENTS.md,CLAUDE.md,LICENSE", "polish: LICENSE, .gitignore, issue templates, CI, AGENTS.md and CLAUDE.md added as one commit");
+  ok((await page.evaluate(() => window.__steject.S.m.commits.at(-1).files.get("LICENSE"))).includes("aadvik"), "polish: LICENSE has the GitHub name");
+
+  // ---- 9h. understanding gate: quiz to pass it, score into the README
+  await page.click('nav [data-go="learn"]');
+  await page.check("#gateOn");
+  await page.click('nav [data-go="ship"]');
+  ok(await page.isDisabled("#pushBtn") && (await page.textContent("#shipMsg")).includes("understanding gate") && await page.isVisible("#gateBox"), "gate: push blocked until the student passes");
+  await page.click('nav [data-go="learn"]');
+  groqPlan = [{ text: JSON.stringify({ questions: [0, 1, 2, 3, 4].map(i => ({ q: "Q" + i, options: ["right", "wrong"], answer: 0, why: "because" })) }) }];
+  await page.click("#lQuiz");
+  await page.waitForSelector(".q", { timeout: 8000 });
+  for (let i = 0; i < 5; i++) await page.click(`.q[data-q="${i}"] button[data-o="${i < 4 ? 0 : 1}"]`);
+  ok((await page.textContent("#quizScore")).includes("4/5") && (await page.textContent("#gateNote")).includes("passed"), "gate: 4/5 on the quiz passes");
+  await page.click('nav [data-go="ship"]');
+  ok(!(await page.isDisabled("#pushBtn")) && (await page.textContent("#gateBox")).includes("4/5"), "gate: push allowed after passing");
+  await page.click("#scoreAdd");
+  const readme = await page.evaluate(() => window.__steject.S.m.commits.at(-1).files.get("README.md"));
+  ok(/## Understanding check[\s\S]*@aadvik[\s\S]*\*\*4\/5\*\*/.test(readme) && !(await page.isDisabled("#pushBtn")), "gate: score added to the README, still passed");
+  await page.click('nav [data-go="learn"]'); await page.uncheck("#gateOn");
+
+  // ---- 9i. mock interview
+  const turn = (q, score, done) => ({ text: JSON.stringify({ feedback: score == null ? "" : "Good.", score, question: q, done: !!done }) });
+  groqPlan = [turn("What does add() return?", null), turn("Q2?", 2), turn("Q3?", 1), turn("Q4?", 2), turn("Q5?", 2), turn("", 2, true)];
+  await page.click("#lInterview");
+  await page.waitForSelector("#ivAnswer", { timeout: 8000 });
+  ok((await page.textContent("#learnOut")).includes("What does add() return?"), "interview: asks about this project");
+  for (let i = 0; i < 5; i++) { await page.fill("#ivAnswer", "My answer " + i); await page.click("#ivSend"); await page.waitForFunction(n => document.querySelectorAll(".iv .me").length === n && !document.querySelector(".thinking"), i + 1, { timeout: 8000 }); }
+  ok((await page.textContent("#learnOut")).includes("9/10") && (await page.textContent("#learnOut")).includes("Passed"), "interview: 5 questions, scored 9/10, passed");
+  await shot({ path: `${OUT}/12-interview.png`, fullPage: true });
+
+  // ---- 9j. web project: check in the sandbox, live preview tab
+  await page.click('nav [data-go="ship"]');
+  await page.fill("#manifest", "=== PROJECT: tip ===\n=== FILE: index.html ===\n<html><body><h1 id=t>Tip</h1><script src=\"app.js\"></script></body></html>\n=== FILE: app.js ===\nconsole.error('total is NaN');\n=== COMMIT: Add page ===");
+  await page.waitForTimeout(300);
+  await page.click("#runCheck");
+  await page.waitForFunction(() => /error/.test(document.querySelector("#runMsg").textContent), null, { timeout: 15000 });
+  ok((await page.textContent("#runMsg")).includes("1 error on the page") && (await page.textContent("#runOut")).includes("total is NaN"), "web check: page errors are caught in the sandbox");
+  ok(await page.isVisible("#runFix"), "web check: Fix with AI offered");
+  await page.click("#vPrev");
+  await page.waitForSelector("#code iframe.preview", { timeout: 5000 });
+  const sandbox = await page.getAttribute("#code iframe.preview", "sandbox");
+  ok(sandbox === "allow-scripts allow-forms", "preview: sandboxed frame (no same-origin access)");
+  await page.waitForTimeout(800);
+  ok((await page.frameLocator("#code iframe.preview").locator("#t").textContent()) === "Tip", "preview: the project's page renders");
+  await page.fill("#manifest", '=== FILE: package.json ===\n{"scripts":{"test":"jest"}}\n=== COMMIT: x ===');
+  await page.waitForTimeout(300); await page.click("#runCheck"); await page.waitForTimeout(400);
+  ok((await page.textContent("#runMsg")).includes("Can't run here"), "Node projects: honest 'can't run here' instead of a fake pass");
+
+  // ---- 9k. open an existing project: GitHub repo (own repo → Update mode), then a pull request
+  await page.click("#ghImportBtn");
+  await page.fill("#importRepo", "aadvik/busy-app");
+  await page.click("#importGo");
+  await page.waitForFunction(() => window.__steject.S.imported === "github", null, { timeout: 8000 });
+  await page.waitForFunction(() => /vs GitHub/.test(document.querySelector("#checks").textContent), null, { timeout: 8000 });
+  ok((await page.getAttribute("#modeUpd", "aria-pressed")) === "true" && (await page.inputValue("#repoPick")) === "aadvik/busy-app", "import: own repo opens in Update mode");
+  ok((await page.textContent("#checks")).includes("0 new · 0 changed"), "import: files match GitHub exactly");
+  groqPlan = [{ text: "=== FILE: utils.py ===\ndef f():\n    return 2\n=== COMMIT: Return 2 from f ===" }];
+  await page.fill("#chatText", "make f return 2"); await page.click("#chatGo");
+  await page.waitForFunction(() => /Done:/.test(document.querySelector("#aiToolMsg").textContent), null, { timeout: 8000 });
+  await page.check("#prOn");
+  ok((await page.inputValue("#prBranch")) === "steject/return-2-from-f" && (await page.textContent("#pushBtn")).includes("pull request"), "PR mode: branch name and title filled in");
+  const mainBefore = repos["aadvik/busy-app"].ref;
+  await page.click("#pushBtn");
+  await page.waitForSelector("#doneBox:not([hidden])", { timeout: 15000 });
+  r = repos["aadvik/busy-app"];
+  ok(r.ref === mainBefore && r.branches && r.branches["steject/return-2-from-f"], "PR mode: main untouched, commits on a new branch");
+  ok(prs.length === 1 && prs[0].base === "main" && prs[0].head === "steject/return-2-from-f" && (await page.textContent("#doneBox")).includes("Pull request #1"), "PR mode: pull request opened into main");
+  await page.click("#pushBtn");
+  await page.waitForTimeout(800);
+  ok((await page.textContent("#log")).includes("already exists"), "PR mode: an existing branch name gets a clear error");
+  await page.uncheck("#prOn"); await page.click("#modeNew");
+
+  // ---- 9l. open a local folder: build folders and binaries are left out
+  const os = require("os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ste-")), projDir = path.join(dir, "MyGame");
+  fs.mkdirSync(path.join(projDir, "src"), { recursive: true }); fs.mkdirSync(path.join(projDir, "node_modules", "x"), { recursive: true });
+  fs.writeFileSync(path.join(projDir, "src", "game.js"), "export const go = () => 1;\n");
+  fs.writeFileSync(path.join(projDir, "README.md"), "# My game\n");
+  fs.writeFileSync(path.join(projDir, "node_modules", "x", "index.js"), "module.exports = 1;\n");
+  fs.writeFileSync(path.join(projDir, "logo.png"), Buffer.from([137, 80, 78, 71, 0, 0]));
+  await page.setInputFiles("#dirIn", projDir);
+  await page.waitForFunction(() => window.__steject.S.imported === "folder", null, { timeout: 5000 });
+  const opened = await page.evaluate(() => [...window.SteCore.finalFiles(window.__steject.S.m).keys()].sort().join(","));
+  ok(opened === "README.md,src/game.js" && (await page.textContent("#projName")).includes("mygame"), "folder: text files opened, node_modules and images left out");
+
+  // ---- 9m. workflow files without the workflow scope: clear message
+  noWorkflowScope = true;
+  await page.fill("#manifest", "=== PROJECT: ci-demo ===\n=== FILE: a.py ===\nx = 1\n=== FILE: .github/workflows/ci.yml ===\nname: CI\n=== COMMIT: Add CI ===");
+  await page.waitForTimeout(300);
+  await page.click("#pushBtn");
+  await page.waitForFunction(() => /workflow/.test(document.querySelector("#log").textContent), null, { timeout: 15000 });
+  ok((await page.textContent("#log")).includes("workflow scopes"), "CI file without the workflow scope: explains the token scope");
+  noWorkflowScope = false;
+
+  // ---- 9n. Learn through Groq, then remove the key
   await page.fill("#manifest", good);
   await page.waitForTimeout(300);
   groqCalls = []; groqPlan = [{ text: "## What it does\nAdds items.\n\n```py\nitems.append(text)\n```" }];
@@ -323,8 +521,26 @@ async function groqMock(route) {
   await page.click("#lExplain");
   await page.waitForSelector("#learnOut .prose h2", { timeout: 8000 });
   ok(groqCalls.length === 1 && (await page.textContent("#learnOut")).includes("What it does"), "Learn works through Groq");
+  ok(/Groq: \d+ requests/.test(await page.evaluate(() => { window.__steject.go("settings"); return document.querySelector("#usageLine").textContent; })), "usage counter counts Groq requests");
   await page.click("#chipAi"); await page.click("#groqRemove");
   ok((await page.textContent("#chipAi")) === "AI: off" && !(await page.evaluate(() => localStorage.getItem("steject.secret.groqKey"))), "removing the Groq key turns AI off and deletes it");
+
+  // ---- 9o. any OpenAI-style provider, with a usage counter
+  await page.click("#provCustom");
+  await page.fill("#customUrl", "http://evil.example/v1"); await page.click("#customSave");
+  ok((await page.textContent("#customMsg")).includes("https://"), "custom: plain http to another computer is refused");
+  await page.fill("#customUrl", "https://ai.example.test/v1/"); await page.fill("#customKey", "sk-test-123");
+  await page.click("#customSave"); await page.waitForTimeout(400);
+  ok((await page.textContent("#customMsg")).includes("2 models"), "custom: lists the service's models");
+  await page.fill("#customModel", "tiny-coder"); await page.dispatchEvent("#customModel", "change");
+  ok((await page.textContent("#chipAi")) === "AI: ai.example.test", "custom: chip shows the service");
+  await page.click('nav [data-go="learn"]'); await page.click("#lExplain");
+  await page.waitForFunction(() => /custom provider/.test(document.querySelector("#learnOut").textContent), null, { timeout: 8000 });
+  ok(customCalls.length === 1 && customCalls[0].auth === "Bearer sk-test-123" && customCalls[0].body.model === "tiny-coder", "custom: Learn runs through the custom address with its key and model");
+  await page.evaluate(() => window.__steject.go("settings"));
+  await page.fill("#usageLimit", "2");
+  ok(/1 request · 42 tokens of 2 a day/.test(await page.textContent("#usageLine")), "usage: requests and tokens today, against a daily limit");
+  await page.click("#customRemove");
   await page.click("#provOllama"); await page.waitForTimeout(400);
 
   // ---- 10. secret blocks push

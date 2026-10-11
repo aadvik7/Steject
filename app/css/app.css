@@ -318,3 +318,50 @@ ol.how { margin: 0; padding-left: 20px; display: flex; flex-direction: column; g
   .pushcols #log { grid-column: 1 / -1; grid-row: 4; }
   .pushcols #doneBox { grid-column: 1 / -1; grid-row: 5; }
 }
+
+/* ---------------------------------------------------------------- 1.2: idea → plan, starters */
+.seg.small button { padding: 5px 9px; font-size: 12px; }
+.starters { display: flex; flex-direction: column; gap: 8px; }
+.starterlist { display: flex; flex-wrap: wrap; gap: 6px; max-height: 148px; overflow: auto; }
+.starter { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 10px; font-size: 12.5px; cursor: pointer; color: var(--ink); }
+.starter:hover { border-color: var(--accent); }
+.starter i { font: 500 10px/1 var(--mono); font-style: normal; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.planbox { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 12px; background: var(--surface); }
+ol.plan { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+ol.plan > li { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; display: flex; flex-direction: column; gap: 6px; }
+ol.plan .pc-head, ol.plan .pf { display: grid; gap: 6px; align-items: center; }
+ol.plan .pc-head { grid-template-columns: minmax(0, 1fr) auto; }
+ol.plan .pf { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; }
+ol.plan input { padding: 6px 8px; font-size: 12.5px; }
+ol.plan .pc-head input { font-family: var(--body); font-weight: 600; }
+ol.plan ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.iconbtn { border: 1px solid var(--line); background: none; border-radius: 4px; width: 28px; height: 28px; cursor: pointer; color: var(--muted); font-size: 14px; line-height: 1; }
+.iconbtn:hover { color: var(--bad); border-color: var(--bad); }
+@media (max-width: 560px) { ol.plan .pf { grid-template-columns: minmax(0, 1fr) auto; } ol.plan .pf .pp { grid-column: 1 / -1; grid-row: 2; } }
+
+/* ---------------------------------------------------------------- 1.2: change with AI, import */
+.chatbox { display: flex; flex-direction: column; gap: 6px; }
+.row.nowrap { flex-wrap: nowrap; }
+.row.nowrap input { flex: 1 1 auto; min-width: 0; }
+
+/* ---------------------------------------------------------------- 1.2: run, check, preview */
+.runbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+details.runout { border: 1px solid var(--line); border-radius: 4px; background: var(--code-bg); }
+details.runout summary { padding: 6px 10px; font: 600 12px/1.3 var(--mono); }
+details.runout pre { margin: 0; padding: 8px 12px; max-height: 220px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--line); }
+.runhost { position: absolute; left: -10000px; top: 0; width: 800px; height: 600px; overflow: hidden; }
+.code .pvwrap { display: flex; flex-direction: column; height: 100%; min-height: 420px; }
+iframe.preview { border: 0; width: 100%; flex: 1 1 auto; min-height: 380px; background: #fff; }
+.code .pvlog { margin: 0; max-height: 120px; overflow: auto; padding: 6px 10px; font: 11.5px/1.45 var(--mono); border-top: 1px solid var(--line); background: var(--sunk); white-space: pre-wrap; }
+.code .pvlog .e { color: var(--bad); }
+
+/* ---------------------------------------------------------------- 1.2: understanding gate, interview, usage */
+#gateBox .row { margin-top: 2px; }
+.iv { display: flex; flex-direction: column; gap: 10px; }
+.iv .msg { border-radius: 6px; padding: 10px 12px; max-width: 85%; font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.iv .ai { background: var(--info-soft); color: var(--ink); align-self: flex-start; }
+.iv .me { background: var(--accent-soft); color: var(--ink); align-self: flex-end; white-space: pre-wrap; }
+.iv .fb { color: var(--muted); font-size: 13px; }
+.iv .pts { font: 600 11px/1 var(--mono); color: var(--info); }
+.iv textarea { min-height: 90px; font-family: var(--body); font-size: 14px; }
+.usage { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }

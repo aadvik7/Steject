@@ -225,11 +225,16 @@
     }
 
     if (!files.size) throw new ManifestError("Couldn't find any files in this reply. Each code block needs a file name just above it (like **app.py**).");
+    return { text: serialize(manifestFromFiles(files, project)), files: [...files.keys()], skipped };
+  }
 
-    // group into commits: setup, code by top folder, tests, docs
+  const slug = s => String(s || "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "my-project";
+
+  /** Group paths into commits in build order: setup, code by top folder, tests, docs. */
+  function groupCommits(paths) {
     const groups = { setup: [], tests: [], docs: [] };
     const codeGroups = new Map();
-    for (const p of files.keys()) {
+    for (const p of paths) {
       const kind = classify(p);
       if (kind === "code") {
         const top = p.includes("/") ? p.split("/")[0] : "";
@@ -242,14 +247,253 @@
     for (const [top, ps] of codeGroups) plan.push([top ? `Add ${top} code` : "Add core code", ps]);
     if (groups.tests.length) plan.push(["Add tests", groups.tests]);
     if (groups.docs.length) plan.push(["Add documentation", groups.docs]);
+    return plan;
+  }
 
-    const name = (project || "my-project").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "my-project";
-    const out = [`=== PROJECT: ${name} ===`];
-    plan.forEach(([msg, ps]) => {
-      ps.forEach(p => { out.push(`=== FILE: ${p} ===`); out.push(files.get(p).replace(/\n$/, "")); });
-      out.push(`=== COMMIT: ${msg} ===`);
+  /** Build a manifest from a Map(path -> text), grouping files into sensible commits. */
+  function manifestFromFiles(files, project) {
+    return {
+      project: slug(project),
+      commits: groupCommits([...files.keys()]).map(([message, ps]) => ({ message, files: new Map(ps.map(p => [p, files.get(p)])) })),
+    };
+  }
+
+  /**
+   * Apply a change manifest (only the files that changed) to a manifest.
+   * inPlace: rewrite files inside the commits that already hold them (a project that isn't pushed yet);
+   * otherwise the change is appended as new commits (it reads as history).
+   */
+  function applyChanges(m, change, opts) {
+    const commits = m.commits.map(c => ({ message: c.message, files: new Map(c.files) }));
+    if (!(opts && opts.inPlace)) {
+      return { project: m.project, commits: commits.concat(change.commits.map(c => ({ message: c.message, files: new Map(c.files) }))) };
+    }
+    const last = commits[commits.length - 1];
+    change.commits.forEach(c => c.files.forEach((v, p) => {
+      if (v === null) { commits.forEach(cm => cm.files.delete(p)); return; }
+      let owner = null;
+      commits.forEach(cm => { if (cm.files.has(p)) owner = cm; });
+      (owner || last).files.set(p, v);
+    }));
+    const kept = commits.filter(c => c.files.size);
+    return { project: m.project, commits: kept.length ? kept : commits.slice(0, 1) };
+  }
+
+  /** What changed between two Map(path -> text) snapshots. */
+  function changedPaths(before, after) {
+    const added = [], changed = [], deleted = [];
+    after.forEach((v, p) => { if (!before.has(p)) added.push(p); else if (before.get(p) !== v) changed.push(p); });
+    before.forEach((_, p) => { if (!after.has(p)) deleted.push(p); });
+    return { added, changed, deleted };
+  }
+
+  // ------------------------------------------------------------------ open an existing project
+  const IMPORT_LIMITS = { files: 300, fileBytes: 200 * 1024, totalBytes: 3 * 1024 * 1024 };
+  const SKIP_DIRS = /(^|\/)(node_modules|\.git|dist|build|out|target|venv|\.venv|env|__pycache__|\.next|\.nuxt|\.cache|coverage|\.idea|\.vscode|\.pytest_cache|\.mypy_cache|\.gradle|bin|obj|vendor)(\/|$)/;
+  const BINARY = /\.(png|jpe?g|gif|webp|bmp|ico|icns|svgz|pdf|zip|gz|tgz|bz2|xz|7z|rar|tar|jar|war|class|exe|dll|so|dylib|o|a|lib|woff2?|ttf|otf|eot|mp3|mp4|m4a|mov|avi|wav|ogg|webm|pyc|pyo|db|sqlite3?|bin|dat|psd|ai|sketch|fig|xlsx?|docx?|pptx?|keystore|p12|pfx)$/i;
+  /** Why a file is left out of an import, or null to include it. */
+  function skipReason(path, size) {
+    if (SKIP_DIRS.test(path)) return "folder";
+    if (BINARY.test(path) || /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|\.DS_Store)$/.test(path)) return "binary";
+    if (size > IMPORT_LIMITS.fileBytes) return "large";
+    try { safePath(path); } catch { return "path"; }
+    return null;
+  }
+
+  // ------------------------------------------------------------------ plan → approve → write
+  /**
+   * Validate a project plan (from the AI or the plan editor).
+   * Returns {project, summary, commits:[{message, files:[{path, purpose}]}]}; throws ManifestError.
+   */
+  function normalizePlan(p, maxFiles) {
+    if (!p || typeof p !== "object") throw new ManifestError("The plan is empty.");
+    const seen = new Set();
+    const commits = (Array.isArray(p.commits) ? p.commits : []).map(c => ({
+      message: String((c && c.message) || "").trim().slice(0, 120),
+      files: (Array.isArray(c && c.files) ? c.files : []).map(f => typeof f === "string" ? { path: f } : f || {})
+        .map(f => ({ path: String(f.path || "").trim(), purpose: String(f.purpose || "").trim().slice(0, 200) }))
+        .filter(f => f.path)
+        .map(f => ({ ...f, path: safePath(f.path) }))
+        .filter(f => !seen.has(f.path) && seen.add(f.path)),
+    })).filter(c => c.files.length);
+    if (!commits.length) throw new ManifestError("The plan has no files.");
+    commits.forEach((c, i) => { if (!c.message) c.message = `Add part ${i + 1}`; });
+    if (seen.size > (maxFiles || 25)) throw new ManifestError(`The plan has ${seen.size} files. Keep it to ${maxFiles || 25} or fewer.`);
+    const project = String(p.project || "").trim();
+    return { project: PROJECT_NAME.test(project) ? project : slug(project), summary: String(p.summary || "").trim().slice(0, 300), commits };
+  }
+
+  /** Rearrange written files into the approved plan's commits. Extra files go into the last commit. */
+  function fitToPlan(m, plan) {
+    const files = finalFiles(m), used = new Set();
+    const commits = plan.commits.map(c => {
+      const fm = new Map();
+      c.files.forEach(f => { if (files.has(f.path)) { fm.set(f.path, files.get(f.path)); used.add(f.path); } });
+      return { message: c.message, files: fm };
     });
-    return { text: out.join("\n") + "\n", files: [...files.keys()], skipped };
+    const extra = [...files.keys()].filter(p => !used.has(p));
+    extra.forEach(p => commits[commits.length - 1].files.set(p, files.get(p)));
+    const missing = plan.commits.flatMap(c => c.files.map(f => f.path)).filter(p => !files.has(p));
+    return { m: { project: plan.project || m.project, commits: commits.filter(c => c.files.size) }, missing, extra };
+  }
+
+  // ------------------------------------------------------------------ project type
+  /** Language, entry point and commands of a project, from its files. */
+  function detectStack(files) {
+    const paths = [...files.keys()];
+    const base = p => p.split("/").pop();
+    const has = re => paths.some(p => re.test(p));
+    const html = paths.find(p => base(p).toLowerCase() === "index.html") || paths.find(p => /\.html?$/i.test(p)) || null;
+    const out = { lang: "other", web: !!html, html, tests: false, entry: null, run: null, test: null, install: null };
+    if (has(/\.py$/)) {
+      out.lang = "python";
+      out.tests = paths.some(p => /\.py$/.test(p) && (/^test_|_test\.py$/.test(base(p)) || /(^|\/)tests?\//.test(p)));
+      const py = paths.filter(p => /\.py$/.test(p) && !/^test_|_test\.py$|^conftest\.py$/.test(base(p)) && !/(^|\/)tests?\//.test(p));
+      out.entry = ["main.py", "app.py", "cli.py", "run.py", "manage.py"].find(n => py.includes(n))
+        || py.find(p => /if __name__ == ["']__main__["']/.test(files.get(p) || "")) || py[0] || null;
+      if (out.entry) out.run = `python ${out.entry}`;
+      if (out.tests) out.test = "python -m pytest";
+      if (files.has("requirements.txt")) out.install = "pip install -r requirements.txt";
+    } else if (files.has("package.json")) {
+      out.lang = "node";
+      let pkg = {};
+      try { pkg = JSON.parse(files.get("package.json")) || {}; } catch {}
+      const sc = pkg.scripts || {};
+      out.install = "npm install";
+      if (sc.test && !/no test specified/.test(sc.test)) { out.test = "npm test"; out.tests = true; }
+      out.run = sc.start ? "npm start" : sc.dev ? "npm run dev" : pkg.main ? `node ${pkg.main}` : files.has("index.js") ? "node index.js" : null;
+    } else if (files.has("go.mod")) {
+      out.lang = "go"; out.run = "go run ."; out.test = "go test ./..."; out.tests = has(/_test\.go$/);
+    } else if (has(/\.java$/)) {
+      out.lang = "java"; out.tests = has(/Test\.java$/);
+      if (files.has("pom.xml")) { out.test = "mvn test"; out.install = "mvn -q compile"; }
+    } else if (html) {
+      out.lang = "web"; out.run = `open ${html} in a browser`;
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------------ repo polish pack
+  const GITIGNORE = {
+    python: "__pycache__/\n*.py[cod]\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n",
+    node: "node_modules/\ndist/\nbuild/\n.env\nnpm-debug.log*\ncoverage/\n",
+    go: "/bin/\n*.exe\n*.test\ncoverage.out\n.env\n",
+    java: "target/\n*.class\n.idea/\n*.iml\n.env\n",
+    web: ".DS_Store\n.env\nnode_modules/\n",
+    other: ".DS_Store\n.env\n",
+  };
+
+  function ciWorkflow(st, files) {
+    const head = "name: CI\n\non:\n  push:\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n";
+    if (st.lang === "python") {
+      return head + "      - uses: actions/setup-python@v6\n        with:\n          python-version: \"3.12\"\n" +
+        "      - run: pip install pytest" + (files.has("requirements.txt") ? " -r requirements.txt" : "") + "\n" +
+        (st.tests ? "      - run: python -m pytest\n" : `      - run: python -m py_compile ${[...files.keys()].filter(p => /\.py$/.test(p)).join(" ")}\n`);
+    }
+    if (st.lang === "node") {
+      return head + "      - uses: actions/setup-node@v5\n        with:\n          node-version: 22\n" +
+        `      - run: ${files.has("package-lock.json") ? "npm ci" : "npm install"}\n` + (st.test ? "      - run: npm test\n" : "");
+    }
+    if (st.lang === "go") return head + "      - uses: actions/setup-go@v6\n        with:\n          go-version: stable\n      - run: go build ./...\n      - run: go test ./...\n";
+    if (st.lang === "java" && files.has("pom.xml")) return head + "      - uses: actions/setup-java@v5\n        with:\n          distribution: temurin\n          java-version: \"21\"\n      - run: mvn -B test\n";
+    return null;
+  }
+
+  function agentsMd(m, files, st) {
+    const readme = files.get("README.md") || "";
+    const summary = (readme.split("\n").find(l => l.trim() && !/^#|^!\[|^\[!/.test(l.trim())) || "").trim();
+    const kind = { code: "code", tests: "tests", docs: "docs", setup: "setup" };
+    return [
+      "# AGENTS.md", "",
+      "Guidance for AI coding tools (Claude Code, Codex, Cursor and others) working in this repository.", "",
+      "## Project", "",
+      `**${m.project}**${summary ? ": " + summary : ""}`, "",
+      "## Layout", "",
+      ...[...files.keys()].sort().map(p => `- \`${p}\` (${kind[classify(p)]})`), "",
+      "## Commands", "",
+      ...(st.install ? [`- Install: \`${st.install}\``] : []),
+      ...(st.run ? [`- Run: \`${st.run}\``] : []),
+      ...(st.test ? [`- Test: \`${st.test}\``] : ["- Tests: none yet. Add them alongside new code."]), "",
+      "## Rules", "",
+      "- Keep changes small and match the existing style and file layout.",
+      "- Add or update tests with every change, and run them before committing.",
+      "- Never commit secrets. Read keys from environment variables.",
+      "- Explain non-obvious decisions in the commit message.", "",
+    ].join("\n");
+  }
+
+  const MIT = (year, who) => `MIT License
+
+Copyright (c) ${year} ${who}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;
+
+  const ISSUE_BUG = "---\nname: Bug report\nabout: Something doesn't work\nlabels: bug\n---\n\n**What happened**\n\n**What you expected**\n\n**Steps to reproduce**\n1.\n2.\n\n**Environment** (OS, version)\n";
+  const ISSUE_FEAT = "---\nname: Feature request\nabout: Suggest an idea\nlabels: enhancement\n---\n\n**The problem**\n\n**The idea**\n\n**Alternatives you considered**\n";
+
+  /**
+   * Repo polish pack as one extra commit, or null if nothing to add.
+   * opts: {license, gitignore, issues, ci, agents, author, year, existing: Set of paths already on GitHub}
+   */
+  function polish(m, opts) {
+    opts = opts || {};
+    const files = finalFiles(m), st = detectStack(files);
+    const skip = p => files.has(p) || (opts.existing && opts.existing.has(p));
+    const add = new Map(), names = [];
+    const put = (p, text, name) => { if (!skip(p) && text) { add.set(p, text); if (!names.includes(name)) names.push(name); } };
+    if (opts.license) put("LICENSE", MIT(opts.year || new Date().getFullYear(), opts.author || "The authors"), "LICENSE");
+    if (opts.gitignore) put(".gitignore", GITIGNORE[st.lang] || GITIGNORE.other, ".gitignore");
+    if (opts.issues) {
+      put(".github/ISSUE_TEMPLATE/bug_report.md", ISSUE_BUG, "issue templates");
+      put(".github/ISSUE_TEMPLATE/feature_request.md", ISSUE_FEAT, "issue templates");
+    }
+    if (opts.ci) put(".github/workflows/ci.yml", ciWorkflow(st, files), "CI");
+    if (opts.agents) {
+      put("AGENTS.md", agentsMd(m, files, st), "AGENTS.md");
+      put("CLAUDE.md", "# CLAUDE.md\n\nProject instructions for Claude Code live in AGENTS.md so every AI tool shares them.\n\n@AGENTS.md\n", "CLAUDE.md");
+    }
+    if (!add.size) return null;
+    return { message: "Add " + names.join(", "), files: add };
+  }
+
+  // ------------------------------------------------------------------ understanding check
+  /** Short stable fingerprint of a project's final files (FNV-1a), to tie a quiz score to one version. */
+  // the README's own "Understanding check" section doesn't count, so adding the score keeps the pass
+  const UNDERSTANDING = /\n?## Understanding check\n[\s\S]*?(?=\n## |$)/;
+  function fingerprint(m) {
+    let h = 0x811c9dc5;
+    const s = [...finalFiles(m)].sort((a, b) => a[0] < b[0] ? -1 : 1)
+      .map(([p, c]) => p + "\0" + (p === "README.md" ? c.replace(UNDERSTANDING, "").replace(/\n*$/, "\n") : c)).join("\0");
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, "0");
+  }
+
+  /** README text with an "Understanding check" section added or replaced. r = {kind, score, total, date, login} */
+  function withUnderstanding(readme, r) {
+    const section = [
+      "## Understanding check", "",
+      `${r.login ? "@" + r.login : "The author"} answered ${r.kind === "interview" ? "a mock interview" : "a quiz"} about this code with [STEJECT](https://github.com/aadvik7/Steject) ` +
+      `and scored **${r.score}/${r.total}** (${r.date}).`, "",
+    ].join("\n");
+    const text = String(readme || "").replace(UNDERSTANDING, "").replace(/\n*$/, "\n");
+    return text.trim() ? text + "\n" + section : section;
   }
 
   /** Does this text look like a manifest (vs a normal chat reply)? */
@@ -436,6 +680,7 @@ CHANGE I WANT:
   return {
     ManifestError, parse, serialize, finalFiles, stats, scanSecrets, safePath,
     convertChatReply, looksLikeManifest, pasteHint, classify,
+    skipReason, IMPORT_LIMITS, groupCommits, manifestFromFiles, normalizePlan, fitToPlan, applyChanges, changedPaths, detectStack, polish, fingerprint, withUnderstanding, slug,
     diffLines, diffSummary, buildScript, fileMode, extractJson, digest,
     PROMPT_TEMPLATE, UPDATE_PROMPT, SECRETS,
   };

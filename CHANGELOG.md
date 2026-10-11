@@ -1,7 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-10-12
 
+A small, student-friendly Claude Code: describe a project, review the plan, get working code, change it by chatting, and prove you understand it.
+
+- **Plan, approve, write:** an idea first becomes an editable file tree and commit plan. Rename, add or remove files and commits, then approve. Only then are files written, grouped exactly as planned.
+- **Change it with AI:** type a change ("add a delete command"). The AI returns only the changed files as a new commit, with a diff and *changed* badges in Inspect.
+- **Self-check loop:** *Check it runs* runs Python tests (pytest) or the main script in the browser, or opens web pages in a sandbox. If it fails, the error goes back to the AI to fix, up to 3 tries. Node, Java and Go say honestly that they can't be checked yet.
+- **Live preview:** web projects show in a sandboxed *Preview* tab with no network access, and the page's console underneath.
+- **Understanding gate and mock interview:** optionally require passing the quiz (3 of 5) or a 5-question mock interview (6 of 10) before pushing a version, and add the score to the README.
+- **Open an existing project:** open a local folder, or a GitHub repo by name. Your own repo opens in Update mode, so changes go on top as new commits. Build folders, binaries and very large files are left out.
+- **Starter gallery:** 18 project ideas by level (beginner to advanced) that fill the idea box in one click. They live in `app/starters/starters.js`, so anyone can contribute one.
+- **Pull request mode:** in Update mode, push to a new branch and open a pull request instead of writing to main.
+- **Repo polish pack:** add a LICENSE, a language-specific .gitignore, issue templates, a CI workflow, and AGENTS.md + CLAUDE.md for AI coding tools, as one reviewable commit.
+- **Any AI provider:** any OpenAI-style address (OpenRouter, Google Gemini, LM Studio, a college server), with presets, a model list, and a usage counter with an optional daily limit.
+- Clear message when a token can't push CI files (it needs the `workflow` scope); the token link now asks for it.
 - Ship page: Paste and Inspect are now the same height, and Push runs full width underneath with its fields lined up in two columns. The code viewer fills its box.
 - Secret scan also catches Groq, Hugging Face and npm tokens.
 - Groq: if a model can't produce strict JSON (quiz, commit plan), STEJECT retries once without JSON mode instead of failing.

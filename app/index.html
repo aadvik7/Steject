@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com https://api.telegram.org https://api.groq.com http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>STEJECT</title>
 <meta name="description" content="Turn a project written by ChatGPT or Claude into a real GitHub repo with real commits.">
@@ -63,6 +63,17 @@
       <details class="tpl" id="ideaBox">
         <summary>Start from an idea (AI writes the project)</summary>
         <div class="stack" style="margin-top:10px">
+          <div class="starters" id="starterBox">
+            <div class="row"><span class="note">Need an idea? Pick a starter:</span>
+              <div class="seg small" role="group" aria-label="Starter level" id="starterLvl">
+                <button type="button" data-lvl="all" aria-pressed="true">All</button>
+                <button type="button" data-lvl="beginner" aria-pressed="false">Beginner</button>
+                <button type="button" data-lvl="intermediate" aria-pressed="false">Intermediate</button>
+                <button type="button" data-lvl="advanced" aria-pressed="false">Advanced</button>
+              </div>
+            </div>
+            <div class="starterlist" id="starterList"></div>
+          </div>
           <label class="f" for="ideaText">What should it build?
             <textarea id="ideaText" rows="3" maxlength="1200" spellcheck="true" placeholder="e.g. A Python command-line to-do app that saves tasks to a file, with unit tests"></textarea>
           </label>
@@ -71,8 +82,23 @@
               <button type="button" id="sizeS" aria-pressed="true">Small</button>
               <button type="button" id="sizeM" aria-pressed="false">Medium</button>
             </div>
-            <button class="btn ai" id="ideaGo" type="button">Write the project</button>
+            <button class="btn ai" id="ideaGo" type="button">Plan the project</button>
             <button class="btn" id="ideaStop" type="button" hidden>Stop</button>
+          </div>
+          <div class="planbox" id="planBox" hidden>
+            <div class="row" style="justify-content:space-between"><h3 class="k">Plan · edit anything, then approve</h3><span class="note" id="planCount"></span></div>
+            <label class="f" for="planName">Project name<input id="planName" type="text" autocomplete="off" spellcheck="false"></label>
+            <p class="note" id="planSummary"></p>
+            <ol class="plan" id="planList" aria-label="Planned commits and files"></ol>
+            <div class="row">
+              <button class="btn small" id="planAddCommit" type="button">+ Commit</button>
+              <label class="cb"><input id="autoCheck" type="checkbox" checked> Then check it runs, and let the AI fix it (up to 3 tries)</label>
+            </div>
+            <div class="row">
+              <button class="btn ai" id="planWrite" type="button">Approve and write the files</button>
+              <button class="btn" id="planRedo" type="button">Plan again</button>
+              <button class="btn" id="planCancel" type="button">Cancel</button>
+            </div>
           </div>
           <p class="status" id="ideaMsg" role="status"></p>
           <p class="note" id="ideaNoAi" hidden>This needs an AI helper. <a href="#settings" data-go="settings" data-focus="groqKey">Set up the free Groq AI</a> or install Ollama in Settings.</p>
@@ -90,15 +116,43 @@
       </div>
       <div class="row">
         <label class="btn filebtn">Open file<input id="fileIn" type="file" accept=".txt,.md,.markdown,text/plain"></label>
+        <label class="btn filebtn">Open folder<input id="dirIn" type="file" webkitdirectory multiple></label>
+        <button class="btn" id="ghImportBtn" type="button">From GitHub</button>
         <button class="btn" id="loadSample" type="button">Load sample</button>
         <button class="btn" id="undoBtn" type="button" hidden>Undo</button>
         <button class="btn" id="clearBtn" type="button">Clear</button>
       </div>
-      <div class="row" id="aiTools" hidden>
-        <button class="btn ai" id="aiReadme" type="button">Write README</button>
-        <button class="btn ai" id="aiPlan" type="button">Re-plan commits</button>
-        <span class="status" id="aiToolMsg" role="status"></span>
+      <div class="callout info" id="importBox" hidden>
+        <span>Open a project that's already on GitHub. STEJECT reads its text files so you can explain, improve or extend it.</span>
+        <label class="f" for="importRepo">Repository <small>owner/name, or pick one of yours</small><input id="importRepo" type="text" list="importRepos" placeholder="aadvik7/my-project" autocomplete="off" spellcheck="false"><datalist id="importRepos"></datalist></label>
+        <div class="row"><button class="btn" id="importGo" type="button">Open it</button><button class="btn" id="importCancel" type="button">Cancel</button><span class="status" id="importMsg" role="status"></span></div>
       </div>
+      <div class="stack" id="aiTools" hidden>
+        <div class="chatbox">
+          <label class="f" for="chatText">Change it with AI <small>Describe one change. You get only the changed files, as a new commit to review.</small></label>
+          <div class="row nowrap">
+            <input id="chatText" type="text" autocomplete="off" placeholder="e.g. add a command to delete a task">
+            <button class="btn ai" id="chatGo" type="button">Apply</button>
+            <button class="btn" id="chatStop" type="button" hidden>Stop</button>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn ai" id="aiReadme" type="button">Write README</button>
+          <button class="btn ai" id="aiPlan" type="button">Re-plan commits</button>
+          <span class="status" id="aiToolMsg" role="status"></span>
+        </div>
+      </div>
+      <details class="tpl" id="polishBox" hidden>
+        <summary>Polish the repo (LICENSE, CI, issue templates, AGENTS.md)</summary>
+        <div class="stack" style="margin-top:10px">
+          <label class="cb"><input id="plLicense" type="checkbox" checked> <span><b>LICENSE</b> · MIT, with your name and the year</span></label>
+          <label class="cb"><input id="plGitignore" type="checkbox" checked> <span><b>.gitignore</b> · picked for the project's language</span></label>
+          <label class="cb"><input id="plIssues" type="checkbox"> <span><b>Issue templates</b> · bug report and feature request</span></label>
+          <label class="cb"><input id="plCi" type="checkbox"> <span><b>CI workflow</b> · runs the tests on GitHub on every push. Your token needs the <code>workflow</code> scope.</span></label>
+          <label class="cb"><input id="plAgents" type="checkbox"> <span><b>AGENTS.md + CLAUDE.md</b> · tells AI coding tools how to run, test and change this project</span></label>
+          <div class="row"><button class="btn" id="plAdd" type="button">Add them as a commit</button><span class="status" id="plMsg" role="status"></span></div>
+        </div>
+      </details>
     </section>
 
     <!-- 2. INSPECT -->
@@ -106,6 +160,14 @@
       <div class="step"><span class="n">2</span><h2 id="h-insp">Inspect</h2><span class="hint" id="projName"></span></div>
       <div class="checks" id="checks"></div>
       <div class="errors" id="errors"></div>
+      <div class="runbar" id="runBar" hidden>
+        <button class="btn small" id="runCheck" type="button">&#9654; Check it runs</button>
+        <button class="btn small ai" id="runFix" type="button" hidden>Fix with AI</button>
+        <button class="btn small" id="runStop" type="button" hidden>Stop</button>
+        <span class="status" id="runMsg" role="status"></span>
+      </div>
+      <details class="runout" id="runDetails" hidden><summary id="runSum">Output</summary><pre id="runOut"></pre></details>
+      <div class="runhost" id="runHost" aria-hidden="true"></div>
       <div class="split">
         <ol class="commits" id="commits" aria-label="Commit plan"></ol>
         <div class="viewer">
@@ -116,6 +178,7 @@
               <span class="vtabs" id="vTabs" hidden>
                 <button type="button" id="vFile" aria-pressed="true">File</button>
                 <button type="button" id="vDiff" aria-pressed="false">Changes</button>
+                <button type="button" id="vPrev" aria-pressed="false">Preview</button>
               </span>
             </span>
           </div>
@@ -135,6 +198,8 @@
       </div>
 
       <label class="override" id="overrideRow" hidden><input id="override" type="checkbox"> I checked the flagged lines. They are not real secrets. Push anyway.</label>
+
+      <div class="callout" id="gateBox" hidden></div>
 
       <div id="paneGh" class="pushcols">
         <div class="acct off" id="acctBox">
@@ -156,6 +221,11 @@
             <select id="repoPick"><option value="">Connect GitHub to see your repos</option></select>
           </label>
           <div class="row"><button type="button" class="btn small" id="repoRefresh">Refresh list</button><span class="status" id="cmpMsg" role="status"></span></div>
+          <label class="cb"><input id="prOn" type="checkbox"> <span>Push to a new branch and open a <b>pull request</b> (main stays untouched)</span></label>
+          <div class="row" id="prFields" hidden>
+            <label class="f" for="prBranch">Branch<input id="prBranch" type="text" autocomplete="off" spellcheck="false"></label>
+            <label class="f" for="prTitle">Pull request title<input id="prTitle" type="text" autocomplete="off"></label>
+          </div>
         </div>
 
         <div class="callout warn" id="replaceBox" hidden>
@@ -197,7 +267,7 @@
   <div class="page-head">
     <div>
       <h1>Learn your project</h1>
-      <p>Understand the code before an interviewer asks about it. Explanations, a quiz and resume bullets, all from your local AI.</p>
+      <p>Understand the code before an interviewer asks about it: explanations, a quiz, a mock interview and resume bullets.</p>
     </div>
   </div>
   <div class="callout warn" id="learnNoAi" hidden>
@@ -215,9 +285,12 @@
       <div class="stack">
         <button class="btn ai" id="lExplain" type="button">Explain this file</button>
         <button class="btn ai" id="lQuiz" type="button">Quiz me (5 questions)</button>
+        <button class="btn ai" id="lInterview" type="button">Mock interview</button>
         <button class="btn ai" id="lResume" type="button">Resume bullets</button>
         <button class="btn" id="lStop" type="button" hidden>Stop</button>
       </div>
+      <label class="cb"><input id="gateOn" type="checkbox"> <span><b>Understanding gate</b>: before I push, I must pass the quiz (3 of 5) or the mock interview (6 of 10) for that version.</span></label>
+      <p class="note" id="gateNote"></p>
     </section>
     <section class="panel">
       <div class="row" style="justify-content:space-between"><h3 class="k" id="learnTitle">Output</h3><button class="btn small" id="lCopy" type="button" hidden>Copy</button></div>
@@ -254,7 +327,7 @@
       <h2 class="k" id="s-gh" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">GitHub</h2>
       <div id="ghOut" class="stack">
         <label class="f" for="ghToken">Personal access token
-          <small>Classic token with the <code>repo</code> scope. <a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=STEJECT" target="_blank" rel="noopener">Create one on GitHub</a></small>
+          <small>Classic token with the <code>repo</code> scope (add <code>workflow</code> to push CI files). <a href="https://github.com/settings/tokens/new?scopes=repo,workflow&amp;description=STEJECT" target="_blank" rel="noopener">Create one on GitHub</a></small>
           <input id="ghToken" type="password" autocomplete="off" placeholder="ghp_...">
         </label>
         <div class="row">
@@ -294,6 +367,21 @@
       <div class="seg" role="group" aria-label="AI provider">
         <button type="button" id="provGroq" aria-pressed="false">Free cloud (Groq)</button>
         <button type="button" id="provOllama" aria-pressed="true">On my computer (Ollama)</button>
+        <button type="button" id="provCustom" aria-pressed="false">Other (OpenAI-style)</button>
+      </div>
+
+      <div class="stack" id="customBox" hidden>
+        <p class="note">Any service that speaks the OpenAI API: OpenRouter, Google Gemini, LM Studio, or your college's server.</p>
+        <div class="row" id="presetBtns"></div>
+        <label class="f" for="customUrl">API address<input id="customUrl" type="url" spellcheck="false" placeholder="https://openrouter.ai/api/v1"></label>
+        <label class="f" for="customKey">API key <small>Leave empty for a local server like LM Studio.</small><input id="customKey" type="password" autocomplete="off" spellcheck="false"></label>
+        <label class="f" for="customModel">Model<input id="customModel" type="text" list="customModels" autocomplete="off" spellcheck="false" placeholder="model name"><datalist id="customModels"></datalist></label>
+        <div class="callout info"><span><strong>Privacy:</strong> the ideas and project text you use AI on are sent to this address. Only https addresses, or http on this computer, are allowed.</span></div>
+        <div class="row">
+          <button class="btn primary" id="customSave" type="button">Save and test</button>
+          <button class="btn" id="customRemove" type="button" hidden>Remove</button>
+          <span class="status" id="customMsg" role="status"></span>
+        </div>
       </div>
 
       <div class="stack" id="groqBox" hidden>
@@ -330,6 +418,12 @@
         <div class="progress"><div id="pullBar"></div></div>
       </div>
       </div>
+
+      <div class="usage">
+        <h3 class="k">Usage today</h3>
+        <p class="status" id="usageLine" role="status"></p>
+        <label class="f" for="usageLimit">Daily request limit <small>Optional. STEJECT warns you near it (free plans often allow 1,000 or fewer).</small><input id="usageLimit" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 1000"></label>
+      </div>
     </section>
 
     <section class="panel" aria-labelledby="s-app">
@@ -365,6 +459,8 @@
 <script src="js/core.js"></script>
 <script src="js/github.js"></script>
 <script src="js/ai.js"></script>
+<script src="js/runner.js"></script>
+<script src="starters/starters.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

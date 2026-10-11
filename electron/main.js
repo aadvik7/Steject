@@ -91,8 +91,18 @@ function createWindow() {
 // ---------------------------------------------------------------- network: let the page talk to Ollama, Telegram and Groq
 // Browsers block reading replies from these hosts (CORS). The desktop app is
 // trusted, so it removes the Origin header on the way out and allows the reply.
+// The AI address the user chose in Settings (OpenRouter, Gemini, a college server…) joins the list.
+const BASE_HOSTS = ["http://localhost/*", "http://localhost:*/*", "http://127.0.0.1/*", "http://127.0.0.1:*/*", "https://api.telegram.org/*", "https://api.groq.com/*"];
+function aiOrigin(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol === "https:" && u.hostname && !u.username && !u.password) return `https://${u.host}`;
+  } catch {}
+  return null;
+}
 function allowLocalApis() {
-  const filter = { urls: ["http://localhost/*", "http://localhost:*/*", "http://127.0.0.1/*", "http://127.0.0.1:*/*", "https://api.telegram.org/*", "https://api.groq.com/*"] };
+  const extra = readJson("prefs.json", {}).aiOrigin;
+  const filter = { urls: [...BASE_HOSTS, ...(aiOrigin(extra) ? [aiOrigin(extra) + "/*"] : [])] };
   session.defaultSession.webRequest.onBeforeSendHeaders(filter, (d, cb) => {
     for (const k of Object.keys(d.requestHeaders)) if (k.toLowerCase() === "origin") delete d.requestHeaders[k];
     cb({ requestHeaders: d.requestHeaders });
@@ -127,6 +137,13 @@ ipcMain.handle("save-file", async (_e, name, bytes) => {
   if (r.canceled || !r.filePath) return false;
   await fs.promises.writeFile(r.filePath, Buffer.from(bytes));
   shell.showItemInFolder(r.filePath);
+  return true;
+});
+ipcMain.handle("net:allow", (_e, url) => {
+  const origin = aiOrigin(url);
+  if (!origin) return false;                       // localhost is already allowed; anything else must be https
+  const prefs = readJson("prefs.json", {});
+  if (prefs.aiOrigin !== origin) { writeJson("prefs.json", { ...prefs, aiOrigin: origin }); allowLocalApis(); }
   return true;
 });
 ipcMain.handle("info", () => ({ version: BUILD.version, repo: BUILD.repo, platform: process.platform, encrypted: safeStorage.isEncryptionAvailable() }));

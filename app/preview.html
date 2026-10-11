@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- STEJECT project preview. Loaded in a sandboxed frame (no access to the app, its storage or tokens).
+     The project gets no network at all: connect-src 'none', no remote scripts, styles or images. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preview</title>
+</head>
+<body>
+<script>
+(function () {
+  "use strict";
+  // Resolve "./a/b.js" against the folder of "dir/index.html" -> "dir/a/b.js"
+  function resolve(from, ref) {
+    if (!ref || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(ref)) return null;
+    const parts = (from.includes("/") ? from.slice(0, from.lastIndexOf("/") + 1) : "").concat(ref.split(/[?#]/)[0]).split("/");
+    const outp = [];
+    for (const p of parts) { if (p === "..") outp.pop(); else if (p && p !== ".") outp.push(p); }
+    return outp.join("/");
+  }
+  const TYPES = { js: "text/javascript", mjs: "text/javascript", css: "text/css", json: "application/json", svg: "image/svg+xml" };
+
+  function build(html, htmlPath, files) {
+    const blobs = {};
+    // JavaScript modules: rewrite relative imports to blob URLs (dependencies first)
+    function jsBlob(path, seen) {
+      if (blobs[path]) return blobs[path];
+      seen = seen || {};
+      if (seen[path]) return URL.createObjectURL(new Blob([""], { type: "text/javascript" }));   // import cycle: stop here
+      seen[path] = true;
+      const src = String(files[path]).replace(/(\bimport\s*(?:[^'"]*?\sfrom\s*)?|\bexport\s+[^'"]*?\sfrom\s*|\bimport\s*\(\s*)(['"])([^'"]+)\2/g, (m, pre, q, spec) => {
+        const target = resolve(path, spec);
+        return target != null && files[target] != null ? pre + q + jsBlob(target, seen) + q : m;
+      });
+      return (blobs[path] = URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+    }
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("link[rel~='stylesheet'][href]").forEach(el => {
+      const p = resolve(htmlPath, el.getAttribute("href"));
+      if (p != null && files[p] != null) { const st = doc.createElement("style"); st.textContent = files[p]; el.replaceWith(st); }
+    });
+    doc.querySelectorAll("script[src]").forEach(el => {
+      const p = resolve(htmlPath, el.getAttribute("src"));
+      if (p == null || files[p] == null) return;
+      if ((el.getAttribute("type") || "").toLowerCase() === "module") el.setAttribute("src", jsBlob(p));
+      else { el.removeAttribute("src"); el.textContent = files[p]; }
+    });
+    doc.querySelectorAll("script[type=module]:not([src])").forEach(el => {
+      el.textContent = el.textContent.replace(/(\bfrom\s*|\bimport\s*\(?\s*)(['"])([^'"]+)\2/g, (m, pre, q, spec) => {
+        const t = resolve(htmlPath, spec);
+        return t != null && files[t] != null ? pre + q + jsBlob(t) + q : m;
+      });
+    });
+    ["img[src]", "source[src]", "audio[src]", "video[src]"].forEach(sel => doc.querySelectorAll(sel).forEach(el => {
+      const p = resolve(htmlPath, el.getAttribute("src"));
+      const ext = p && p.split(".").pop().toLowerCase();
+      if (p != null && files[p] != null && TYPES[ext]) el.setAttribute("src", URL.createObjectURL(new Blob([files[p]], { type: TYPES[ext] })));
+    }));
+    // links between the project's pages can't be followed in a preview
+    doc.querySelectorAll("a[href]").forEach(a => { if (!/^#/.test(a.getAttribute("href"))) a.setAttribute("data-ste-href", a.getAttribute("href")); });
+
+    // first thing on the page: report errors and console output to STEJECT
+    const hook = doc.createElement("script");
+    hook.textContent = "(" + function () {
+      const send = (level, text) => { try { parent.postMessage({ steject: "preview", type: "log", level, text: String(text).slice(0, 2000) }, "*"); } catch (e) {} };
+      const fmt = a => Array.prototype.map.call(a, x => { try { return typeof x === "string" ? x : x instanceof Error ? x.stack || x.message : JSON.stringify(x); } catch (e) { return String(x); } }).join(" ");
+      ["log", "info", "warn", "error"].forEach(level => { const orig = console[level]; console[level] = function () { send(level, fmt(arguments)); return orig.apply(console, arguments); }; });
+      addEventListener("error", e => send("error", e.error && e.error.stack ? e.error.stack : (e.message || "Error") + (e.filename ? " (line " + e.lineno + ")" : "")));
+      addEventListener("unhandledrejection", e => send("error", "Unhandled promise rejection: " + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+      addEventListener("click", e => { const a = e.target.closest && e.target.closest("a[data-ste-href]"); if (a) { e.preventDefault(); send("info", "Link to " + a.getAttribute("data-ste-href") + " (links between pages don't open in the preview)"); } }, true);
+      window.alert = m => send("info", "alert: " + m); window.confirm = () => true; window.prompt = () => null;
+      addEventListener("load", () => setTimeout(() => send("loaded", ""), 50));
+    } + ")();";
+    (doc.head || doc.documentElement).prepend(hook);
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  addEventListener("message", function onLoad(e) {
+    const d = e.data || {};
+    if (e.source !== parent || d.steject !== "load") return;
+    removeEventListener("message", onLoad);
+    let page;
+    try { page = build(String(d.files[d.html] || ""), d.html, d.files || {}); }
+    catch (err) { parent.postMessage({ steject: "preview", type: "log", level: "error", text: "Couldn't build the preview: " + err.message }, "*"); return; }
+    document.open(); document.write(page); document.close();
+  });
+  parent.postMessage({ steject: "preview", type: "ready" }, "*");
+})();
+</script>
+</body>
+</html>

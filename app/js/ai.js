@@ -87,9 +87,21 @@
     };
   }
 
-  // ------------------------------------------------------------------ Groq (free cloud AI)
-  // OpenAI-compatible API. The user brings their own free key from console.groq.com.
+  // ------------------------------------------------------------------ OpenAI-style APIs (Groq, OpenRouter, Gemini, LM Studio, …)
+  // Groq is the built-in free cloud option; "custom" is any address that speaks the same API.
   const GROQ_BASE = "https://api.groq.com/openai/v1";
+  const PRESETS = [
+    { id: "openrouter", name: "OpenRouter", base: "https://openrouter.ai/api/v1", keyUrl: "https://openrouter.ai/keys", model: "meta-llama/llama-3.3-70b-instruct:free" },
+    { id: "gemini", name: "Google Gemini", base: "https://generativelanguage.googleapis.com/v1beta/openai", keyUrl: "https://aistudio.google.com/apikey", model: "gemini-2.5-flash" },
+    { id: "lmstudio", name: "LM Studio", base: "http://localhost:1234/v1", keyUrl: "", model: "" },
+  ];
+  /** Is this an address STEJECT may call? https anywhere, or http on this computer only. */
+  function validBase(url) {
+    try {
+      const u = new URL(String(url).trim());
+      return u.protocol === "https:" || (u.protocol === "http:" && /^(localhost|127\.0\.0\.1)$/.test(u.hostname));
+    } catch { return false; }
+  }
   const GROQ_MODELS = [
     { id: "llama-3.3-70b-versatile", note: "Recommended. Good all-round choice for writing projects and explaining code." },
     { id: "openai/gpt-oss-120b", note: "Strongest reasoning. Slower, and uses more of your free limit." },
@@ -98,8 +110,16 @@
   ];
   const NOT_CHAT = /whisper|orpheus|guard|tts|compound|embed|safeguard/i;
 
-  function groq(key) {
-    const auth = { Authorization: "Bearer " + key };
+  function groq(key, hooks) { return compat({ base: GROQ_BASE, key, name: "Groq", keyHelp: "Copy it again from console.groq.com/keys.", groq: true, ...hooks }); }
+
+  /**
+   * Client for an OpenAI-compatible API.
+   * opts: {base, key, name, keyHelp, groq, onRequest(), onUsage({prompt, completion, total})}
+   */
+  function compat(opts) {
+    const BASE = String(opts.base || GROQ_BASE).replace(/\/+$/, "");
+    const NAME = opts.name || "The AI service";
+    const auth = opts.key ? { Authorization: "Bearer " + opts.key } : {};
     const sleep = (ms, signal) => new Promise((res, rej) => {
       const t = setTimeout(res, ms);
       if (signal) signal.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("Aborted", "AbortError")); }, { once: true });
@@ -117,19 +137,19 @@
 
     async function failure(res) {
       let msg = "";
-      try { msg = ((await res.json()).error || {}).message || ""; } catch {}
+      try { const j = await res.json(); msg = (j.error && (j.error.message || (typeof j.error === "string" ? j.error : ""))) || j.message || ""; } catch {}
       let e;
-      if (res.status === 401) e = new Error("Groq rejected the API key. Copy it again from console.groq.com/keys.");
-      else if (res.status === 404) e = new Error("Groq doesn't have that model. Pick another one in Settings.");
-      else if (res.status === 413) e = new Error("That is too big for this Groq model's size limit. Try a smaller project or another model.");
+      if (res.status === 401 || res.status === 403 && /key|auth|permission/i.test(msg)) e = new Error(`${NAME} rejected the API key. ${opts.keyHelp || "Check the key in Settings."}`);
+      else if (res.status === 404) e = new Error(`${NAME} doesn't have that model, or the address is wrong. Pick another model in Settings.`);
+      else if (res.status === 413) e = new Error(`That is too big for this ${NAME} model's size limit. Try a smaller project or another model.`);
       else if (res.status === 429) {
-        const daily = /per day|\bTPD\b|\bRPD\b/i.test(msg);
+        const daily = /per day|\bTPD\b|\bRPD\b|daily|quota/i.test(msg);
         e = new Error(daily
-          ? "You've used today's free Groq limit for this model. Pick another model in Settings, switch to Ollama, or try again tomorrow."
-          : "Groq's free limit for the last minute is used up. Wait a minute and try again.");
+          ? `You've used today's free ${NAME} limit for this model. Pick another model in Settings, switch provider, or try again tomorrow.`
+          : `${NAME}'s free limit for the last minute is used up. Wait a minute and try again.`);
         e.daily = daily;
         e.retryAfter = parseFloat(res.headers.get("retry-after")) || waitFromMessage(msg);
-      } else e = new Error(`Groq error ${res.status}${msg ? ": " + msg.slice(0, 200) : ""}`);
+      } else e = new Error(`${NAME} error ${res.status}${msg ? ": " + msg.slice(0, 200) : ""}`);
       e.status = res.status; e.detail = msg;
       return e;
     }
@@ -138,10 +158,12 @@
     async function call(path, init, signal, onWait) {
       for (let attempt = 0; ; attempt++) {
         let res;
-        try { res = await fetch(GROQ_BASE + path, { ...init, signal }); }
+        try { res = await fetch(BASE + path, { ...init, signal }); }
         catch (e) {
           if (e.name === "AbortError") throw e;
-          throw new Error("Couldn't reach Groq. Check your internet connection. (In a normal browser tab Groq can block direct calls; the desktop app doesn't have that limit.)");
+          throw new Error(opts.groq
+            ? "Couldn't reach Groq. Check your internet connection. (In a normal browser tab Groq can block direct calls; the desktop app doesn't have that limit.)"
+            : `Couldn't reach ${BASE}. Check the address and your connection. In a browser tab the service may block direct calls; the desktop app doesn't have that limit.`);
         }
         if (res.ok) return res;
         const err = await failure(res);
@@ -156,14 +178,16 @@
     }
 
     return {
-      /** Checks the key and returns the chat models it can use. */
+      base: BASE,
+      /** Checks the key and returns the chat models it can use (models: null if the service has no list). */
       async status() {
         try {
           const res = await call("/models", { method: "GET", headers: auth });
           const data = await res.json();
-          const ids = (data.data || []).map(m => m.id).filter(id => id && !NOT_CHAT.test(id));
+          const ids = (data.data || data.models || []).map(m => (m.id || m.name || "").replace(/^models\//, "")).filter(id => id && !NOT_CHAT.test(id));
           return { ok: true, models: ids };
         } catch (e) {
+          if (!opts.groq && e.status === 404) return { ok: true, models: null };
           return { ok: false, reason: e.status === 401 ? "badkey" : "error", message: e.message };
         }
       },
@@ -173,19 +197,21 @@
         if (maxTokens) body.max_tokens = maxTokens;
         if (/^openai\/gpt-oss/.test(model)) body.reasoning_effort = "low";
         if (json) body.response_format = { type: "json_object" };
+        if (!opts.groq) body.stream_options = { include_usage: true };   // Groq reports usage on its own
         const send = () => call("/chat/completions", { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body) }, signal, onWait);
         let res;
+        opts.onRequest && opts.onRequest();
         try { res = await send(); }
         catch (e) {
           // a model that doesn't accept an optional setting, or can't produce strict JSON:
           // drop the extras and try once more (callers already pull JSON out of plain text)
-          if (e.status === 400 && /response_format|reasoning|json/i.test(e.detail || "") && (body.response_format || body.reasoning_effort)) {
-            delete body.response_format; delete body.reasoning_effort;
+          if (e.status === 400 && /response_format|reasoning|json|stream_options/i.test(e.detail || "") && (body.response_format || body.reasoning_effort || body.stream_options)) {
+            delete body.response_format; delete body.reasoning_effort; delete body.stream_options;
             res = await send();
           } else throw e;
         }
         const reader = res.body.getReader(), dec = new TextDecoder();
-        let buf = "", text = "", finish = null;
+        let buf = "", text = "", finish = null, usage = null;
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -197,13 +223,16 @@
             const data = line.slice(5).trim();
             if (!data || data === "[DONE]") continue;
             let j; try { j = JSON.parse(data); } catch { continue; }
-            if (j.error) throw new Error("Groq: " + (j.error.message || "error"));
+            if (j.error) throw new Error(NAME + ": " + (j.error.message || "error"));
+            const u = j.usage || (j.x_groq && j.x_groq.usage);
+            if (u) usage = u;
             const ch = j.choices && j.choices[0];
             if (!ch) continue;
             if (ch.delta && ch.delta.content) { text += ch.delta.content; onText && onText(text); }
             if (ch.finish_reason) finish = ch.finish_reason;
           }
         }
+        if (usage && opts.onUsage) opts.onUsage({ prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0, total: usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)) });
         onFinish && onFinish(finish);
         return text.replace(/<think>[\s\S]*?<\/think>/g, "");
       },
@@ -214,28 +243,100 @@
   const SYS = "You are STEJECT's assistant, helping a student understand and ship a coding project. Be accurate, concrete and brief. Never invent files that are not in the project.";
 
   const prompts = {
-    idea(idea, size) {
-      const scale = size === "medium" ? "5 to 9 files, none longer than 150 lines" : "3 to 6 files, none longer than 100 lines";
+    /** Step 1 of an idea: a plan (file tree + commits) the student can edit before any code is written. */
+    plan(idea, size) {
+      const scale = size === "medium" ? "5 to 9 files" : "3 to 6 files";
+      return [
+        { role: "system", content: "You plan small, complete, beginner-friendly coding projects for students. Respond with JSON only." },
+        { role: "user", content:
+`Plan this project: ${String(idea).trim().slice(0, 1200)}
+
+Return JSON exactly like:
+{"project":"short-kebab-case-name","summary":"one sentence","commits":[{"message":"Imperative commit message","files":[{"path":"relative/path.ext","purpose":"what this file does, one short line"}]}]}
+
+Rules:
+- ${scale} in total, 3 to 5 commits in build order: setup and core first, then features, tests, and README last.
+- Include README.md and .gitignore. Add a small test file when the language has a standard test tool.
+- Standard library or very common packages only. No API keys, accounts or network services.
+- Relative paths, text files only.` },
+      ];
+    },
+    /** Step 2: write exactly the approved plan as a manifest. */
+    writePlan(idea, plan, size) {
+      const limit = size === "medium" ? 150 : 100;
+      const tree = plan.commits.map(c => `${c.message}:\n` + c.files.map(f => `  - ${f.path}${f.purpose ? " — " + f.purpose : ""}`).join("\n")).join("\n");
       return [
         { role: "system", content: "You write complete, working, beginner-friendly projects for students and output them in the STEJECT manifest format. Output ONLY the manifest: no explanations and no markdown fences." },
         { role: "user", content:
 `Write this project: ${String(idea).trim().slice(0, 1200)}
+${plan.summary ? "Summary: " + plan.summary + "\n" : ""}
+The student approved this plan. Write exactly these files, grouped into exactly these commits, in this order:
+${tree}
 
 Output format (exactly):
-=== PROJECT: <short-kebab-case-name> ===
+=== PROJECT: ${plan.project} ===
 === FILE: <relative/path> ===
 <full file contents>
-=== COMMIT: <imperative commit message> ===
+=== COMMIT: <commit message from the plan> ===
 
 Rules:
-- ${scale}. Every file complete and runnable. No placeholders or TODOs.
-- 3 to 5 commits in build order: setup and core first, then features, tests, and README last. A file goes before the COMMIT line it belongs to.
-- Include README.md (what it is, how to run it, how to test it) and a .gitignore.
-- Add a small test file when the language has a standard test tool.
+- Every file complete and runnable, none longer than ${limit} lines. No placeholders or TODOs.
+- README.md says what it is, how to run it and how to test it.
 - Use only the standard library or very common packages. No API keys, accounts or network services.
-- Relative paths only. Text files only (no images or binaries).
 - Never write a line that starts with "=== " inside a file.` },
       ];
+    },
+    /** Chat to change: returns only the files that change, as new commit(s). */
+    change(request, digest) {
+      return [
+        { role: "system", content: "You change an existing student project. Output ONLY a STEJECT manifest containing the files you add or change: no explanations and no markdown fences." },
+        { role: "user", content:
+`Make this change: ${String(request).trim().slice(0, 1500)}
+
+Output ONLY the files you add or change, each one complete, then one COMMIT line:
+=== FILE: <relative/path> ===
+<full new file contents>
+=== COMMIT: <imperative commit message for this change> ===
+To remove a file write: === DELETE: <path> === before the COMMIT line.
+Don't output files that stay the same. Keep the project's style. Update the README or tests if the change needs it.
+Never write a line that starts with "=== " inside a file.
+
+THE PROJECT:
+${digest}` },
+      ];
+    },
+    /** Self-check loop: the project failed its run or tests; return fixed files only. */
+    fixRun(output, digest, kind) {
+      return [
+        { role: "system", content: "You fix bugs in a student project. Output ONLY a STEJECT manifest with the files you change: no explanations and no markdown fences." },
+        { role: "user", content:
+`The project failed when STEJECT ${kind === "web" ? "opened it in a browser" : "ran it"}. Fix the cause.
+
+OUTPUT:
+${String(output).slice(-4000)}
+
+Output ONLY the files you change, each one complete, then one COMMIT line:
+=== FILE: <relative/path> ===
+<full fixed file contents>
+=== COMMIT: Fix <what was wrong> ===
+Fix the code, not the tests, unless a test itself is wrong. Don't output files that stay the same.
+Never write a line that starts with "=== " inside a file.
+
+THE PROJECT:
+${digest}` },
+      ];
+    },
+    /** Mock interview: one turn. Answer with JSON {feedback, score, question, done}. */
+    interview(digest, n) {
+      return { role: "system", content:
+`You are a friendly but rigorous technical interviewer. The candidate is a student presenting the project below, which they say they built.
+Ask ${n} questions in total, one at a time, about THIS code: what parts do, why it was built this way, edge cases, how they would extend or test it.
+Every reply is JSON only: {"feedback":"1-2 sentences on the last answer, or empty for the first turn","score":0|1|2|null,"question":"the next question, or empty when finished","done":true|false}
+score rates the last answer: 0 wrong or empty, 1 partly right, 2 clear and correct; null on the first turn.
+After the candidate answers question ${n}, give feedback and score, set "question" to "" and "done" to true.
+
+THE PROJECT:
+${digest}` };
     },
     fixManifest(raw) {
       return [
@@ -311,7 +412,7 @@ ${raw}` },
     return data.result;
   }
 
-  const api = { MODELS, GROQ_MODELS, ollama, groq, prompts, telegram };
+  const api = { MODELS, GROQ_MODELS, PRESETS, validBase, ollama, groq, compat, prompts, telegram };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.SteAI = api;
 })(typeof self !== "undefined" ? self : this);
