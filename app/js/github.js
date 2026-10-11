@@ -121,13 +121,13 @@
     let ctx = job.ctx;
 
     if (!ctx) {
-      ctx = { next: 0, parent: null, prevTree: null, paths: new Set(), made: [] };
+      ctx = { next: 0, parent: null, prevTree: null, paths: new Set(), made: [], startHead: null };
       if (job.mode === "update") {
         log.run("check", `Reading ${job.full}`);
         const st = await repoState(token, job.full);
         if (!st) throw new GhError(404, `${job.full} doesn't exist, or your token can't see it.`);
         Object.assign(ctx, { full: st.full, branch: st.branch, url: st.url, paths: st.paths });
-        if (st.head) { ctx.parent = st.head; ctx.prevTree = st.tree; ctx.fastForward = true; }
+        if (st.head) { ctx.parent = st.head; ctx.prevTree = st.tree; ctx.fastForward = true; ctx.startHead = st.head; }
         else { await initEmpty(req, st.full); ctx.fastForward = false; }
         log.update("check", "ok", st.head ? `${st.full} on ${st.branch} (${st.paths.size} files)` : `${st.full} is empty`);
       } else {
@@ -213,7 +213,8 @@
       throw e;
     }
     log.update("ref", "ok", `${ctx.branch} → ${ctx.parent.slice(0, 7)}`);
-    return { status: "done", url: ctx.url, full: ctx.full, commits: ctx.made.length };
+    // before/after let the app undo this push later (revert or reset)
+    return { status: "done", url: ctx.url, full: ctx.full, commits: ctx.made.length, branch: ctx.branch, before: ctx.startHead, after: ctx.parent, created: !!ctx.created };
   }
 
   // An empty repo has no branch, and Git Data endpoints refuse to work on it. Add one tiny commit to initialize.
@@ -263,7 +264,29 @@
     return { files: sorted, skipped, branch, head: ref.object.sha, full: repo.full_name };
   }
 
-  const api = { GhError, me, listRepos, repoState, readFile, ship, importRepo, b64, unb64 };
+  /**
+   * Undo a push. how: "revert" adds a commit that restores the files from `before` (history kept);
+   * "reset" moves the branch back to `before` (history rewritten). Both refuse if the branch moved since `after`,
+   * unless allowMoved is set for a revert.
+   */
+  async function undoPush(token, { full, branch, before, after, how, message, allowMoved }) {
+    const { req } = client(token);
+    const ref = await req(`/repos/${full}/git/ref/heads/${encodeURIComponent(branch)}`);
+    const head = ref.object.sha;
+    if (head !== after && !(how === "revert" && allowMoved)) {
+      throw new GhError(409, `${full} changed on GitHub after this push (now at ${head.slice(0, 7)}). ${how === "reset" ? "Resetting would delete those newer commits, so STEJECT won't do it." : "Undo would also undo the newer changes."}`);
+    }
+    if (how === "reset") {
+      await req(`/repos/${full}/git/refs/heads/${encodeURIComponent(branch)}`, { method: "PATCH", body: { sha: before, force: true } });
+      return { head: before };
+    }
+    const old = await req(`/repos/${full}/git/commits/${before}`);
+    const commit = await req(`/repos/${full}/git/commits`, { method: "POST", body: { message: message || "Revert the last STEJECT push", tree: old.tree.sha, parents: [head] } });
+    await req(`/repos/${full}/git/refs/heads/${encodeURIComponent(branch)}`, { method: "PATCH", body: { sha: commit.sha, force: false } });
+    return { head: commit.sha };
+  }
+
+  const api = { GhError, me, listRepos, repoState, readFile, ship, importRepo, undoPush, b64, unb64 };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.SteGitHub = api;
 })(typeof self !== "undefined" ? self : this);

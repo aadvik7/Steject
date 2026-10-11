@@ -350,7 +350,8 @@
   }
 
   // prevFiles: the files before an AI change, so Inspect can badge and diff what changed
-  function setText(text, keepUndo, prevFiles) {
+  function setText(text, keepUndo, prevFiles, label) {
+    if (keepUndo && ta.value.trim() && ta.value !== text) checkpoint(label || "Before a change", ta.value);
     if (keepUndo) { S.undo = ta.value; $("undoBtn").hidden = false; }
     ta.value = text;
     S.prevFiles = prevFiles || null;
@@ -371,7 +372,7 @@
   $("convertBtn").addEventListener("click", () => {
     try {
       const r = C.convertChatReply(ta.value);
-      setText(r.text, true);
+      setText(r.text, true, null, "Before converting a chat reply");
       toast(`Converted ${plural(r.files.length, "file")}${r.skipped ? `, skipped ${plural(r.skipped, "code block")} with no file name` : ""}. Check the commit plan.`);
     } catch (e) {
       $("convertBox").hidden = true;
@@ -406,7 +407,7 @@
       }), () => { $("fixCancel").hidden = true; $("fixProg").hidden = true; bar.style.width = "0"; });
       let text = out.trim().replace(/^```[a-z]*\n?/i, "").replace(/\n?```\s*$/, "");
       C.parse(text); // throws if still broken
-      setText(text, true);
+      setText(text, true, null, "Before the AI repaired the format");
       toast("Repaired. Check every file before pushing: small models can make mistakes.");
     } catch (e) {
       if (e.name === "AbortError") { $("fixText").textContent = "Stopped."; }
@@ -424,7 +425,7 @@
       const readme = out.trim().replace(/^```(?:markdown|md)?\n/i, "").replace(/\n```\s*$/, "") + "\n";
       const exists = C.finalFiles(S.m).has("README.md");
       const m2 = { project: S.m.project, commits: [...S.m.commits, { message: exists ? "Update README" : "Add README", files: new Map([["README.md", readme]]) }] };
-      setText(C.serialize(m2), true);
+      setText(C.serialize(m2), true, null, "Before the AI wrote a README");
       S.selected = "README.md"; showFile("README.md");
       setStatus("aiToolMsg", "README added as the last commit. Review it before pushing.", "ok");
     } catch (e) { setStatus("aiToolMsg", e.name === "AbortError" ? "Stopped." : e.message, "bad"); }
@@ -449,7 +450,7 @@
       });
       const left = [...files.keys()].filter(p => !used.has(p));
       if (left.length) commits.push({ message: "Add remaining files", files: new Map(left.map(p => [p, files.get(p)])) });
-      setText(C.serialize({ project: S.m.project, commits }), true);
+      setText(C.serialize({ project: S.m.project, commits }), true, null, "Before re-planning commits");
       setStatus("aiToolMsg", `New plan: ${plural(commits.length, "commit")}. Undo if you preferred the old one.`, "ok");
     } catch (e) { setStatus("aiToolMsg", e.name === "AbortError" ? "Stopped." : "Couldn't re-plan: " + e.message, "bad"); }
     finally { $("aiReadme").disabled = $("aiPlan").disabled = false; }
@@ -625,7 +626,7 @@
       log.update("tg", tg === "sent" ? "ok" : "skip", tg === "sent" ? "Telegram alert sent" : tg === "failed" ? "Telegram alert failed. Check the bot settings." : "Telegram alert off");
       $("doneBox").innerHTML = `<span>${r.pr ? `Pull request #${r.pr.number} opened.` : job.mode === "update" ? "Updated." : "Shipped."}</span><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url.replace(/^https:\/\//, ""))}</a>`;
       $("doneBox").hidden = false;
-      addHistory({ full: r.full, url: r.url, commits: r.commits, mode: r.pr ? "pr" : job.mode, project: m.project, files: C.stats(m).files, at: Date.now() });
+      addHistory({ full: r.full, url: r.url, commits: r.commits, mode: r.pr ? "pr" : job.mode, project: m.project, files: C.stats(m).files, at: Date.now(), branch: r.branch, before: r.before || null, after: r.after || null, created: !!r.created });
       if (r.pr) { $("prBranch").dataset.touched = ""; $("prTitle").dataset.touched = ""; }
       if (job.mode === "update") { S.target = null; compareTarget(); }
       else { S.repos = []; }
@@ -829,6 +830,121 @@
     } finally { learnBusy(false); }
   });
 
+  // ================================================================ CHECKPOINTS (IndexedDB, this computer only)
+  const CP_MAX = 100, CP_BYTES = 20 * 1024 * 1024;
+  let cpDb = null, cpMem = [], cpLast = null;       // memory fallback when IndexedDB isn't available
+  function cpOpen() {
+    if (cpDb !== null) return Promise.resolve(cpDb);
+    return new Promise(res => {
+      try {
+        const r = indexedDB.open("steject", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("checkpoints", { keyPath: "id", autoIncrement: true });
+        r.onsuccess = () => res(cpDb = r.result);
+        r.onerror = r.onblocked = () => res(cpDb = false);
+      } catch { res(cpDb = false); }
+    });
+  }
+  function idb(db, mode, fn) {
+    return new Promise((res, rej) => {
+      const tx = db.transaction("checkpoints", mode), req = fn(tx.objectStore("checkpoints"));
+      tx.oncomplete = () => res(req && req.result); tx.onerror = tx.onabort = () => rej(tx.error);
+    });
+  }
+  async function cpAll() {
+    const db = await cpOpen();
+    if (!db) return cpMem.slice();
+    try { return (await idb(db, "readonly", s => s.getAll())) || []; } catch { return []; }
+  }
+  async function cpDelete(ids) {
+    const db = await cpOpen();
+    if (!db) { cpMem = cpMem.filter(c => !ids.includes(c.id)); return; }
+    await idb(db, "readwrite", s => { ids.forEach(id => s.delete(id)); return null; });
+  }
+  /** Save the project as it is now (or `text`), so any AI change can be taken back. */
+  async function checkpoint(label, text) {
+    text = text == null ? ta.value : text;
+    if (!text.trim() || text === cpLast) return;
+    cpLast = text;
+    let project = "";
+    try { project = C.parse(text).project; } catch {}
+    const rec = { at: Date.now(), label: String(label || "Checkpoint").slice(0, 120), text, size: text.length, project };
+    try {
+      const db = await cpOpen();
+      if (db) await idb(db, "readwrite", s => s.add(rec)); else cpMem.push({ ...rec, id: (cpMem.length ? cpMem[cpMem.length - 1].id : 0) + 1 });
+      // keep the newest 100, and at most 20 MB in total
+      const all = (await cpAll()).sort((a, b) => a.id - b.id);
+      let bytes = all.reduce((n, c) => n + c.size, 0), drop = [];
+      while (all.length - drop.length > 1 && (all.length - drop.length > CP_MAX || bytes > CP_BYTES)) { const c = all[drop.length]; drop.push(c.id); bytes -= c.size; }
+      if (drop.length) await cpDelete(drop);
+    } catch {}
+    renderCheckpoints();
+  }
+  async function renderCheckpoints() {
+    const list = (await cpAll()).sort((a, b) => b.id - a.id);
+    $("cpCount").textContent = list.length;
+    $("cpList").innerHTML = list.length ? list.map(c => `
+      <li><span class="cl">${esc(c.label)}</span>
+        <span class="cm">${esc(new Date(c.at).toLocaleString())}${c.project ? " · " + esc(c.project) : ""} · ${(c.size / 1024).toFixed(1)} KB</span>
+        <button class="btn small" type="button" data-cp="${c.id}">Restore</button></li>`).join("")
+      : `<li><span class="cm">No checkpoints yet. One is saved before every AI change.</span></li>`;
+    $("cpClear").hidden = !list.length;
+  }
+  $("cpList").addEventListener("click", async e => {
+    const b = e.target.closest("[data-cp]");
+    if (!b) return;
+    const rec = (await cpAll()).find(c => c.id === +b.dataset.cp);
+    if (!rec) return;
+    if (rec.text === ta.value) { toast("That's already the current version."); return; }
+    const before = S.m ? C.finalFiles(S.m) : null;
+    setText(rec.text, true, null, "Before restoring a checkpoint");
+    if (before && S.m) { S.prevFiles = before; render(); showChanges(before); }
+    toast(`Restored "${rec.label}". The version you had is a checkpoint too.`);
+  });
+  $("cpSave").addEventListener("click", async () => { cpLast = null; await checkpoint("Saved by hand"); toast("Checkpoint saved."); });
+  $("cpClear").addEventListener("click", async () => { await cpDelete((await cpAll()).map(c => c.id)); cpLast = null; renderCheckpoints(); toast("Checkpoints deleted."); });
+
+  // ================================================================ HISTORY: undo a push
+  function showUndo(i) {
+    const e = store.get("history", [])[i], box = $("undoBox");
+    if (!e) return;
+    box.hidden = false;
+    if (e.mode === "new") {
+      box.innerHTML = `<span><b>Undo creating ${esc(e.full)}?</b> This push created the repo, so there's no earlier version to go back to. To remove it completely, delete it on GitHub: <b>Settings → Danger Zone → Delete this repository</b>.</span>
+        <div class="row"><a class="btn small" href="https://github.com/${esc(e.full)}/settings" target="_blank" rel="noopener">Open the repo's settings</a><button class="btn small" type="button" data-undo-close>Close</button></div>`;
+      return;
+    }
+    box.innerHTML = `<span><b>Undo the push of ${plural(e.commits, "commit")} to ${esc(e.full)}</b> from ${esc(new Date(e.at).toLocaleString())}.</span>
+      <span><b>Revert (recommended):</b> adds one new commit that puts every file back the way it was before the push. History is kept, so this is always safe.</span>
+      <div class="row"><button class="btn" type="button" id="undoRevert">Revert</button><button class="btn" type="button" data-undo-close>Cancel</button></div>
+      <span><b>Reset:</b> moves <code>${esc(e.branch)}</code> back to <code>${esc(e.before.slice(0, 7))}</code> and deletes those commits from the history. Anyone who already pulled them will have trouble. Type <b>${esc(e.full)}</b> to confirm.</span>
+      <div class="row nowrap"><input id="undoConfirm" type="text" autocomplete="off" spellcheck="false" aria-label="Type the repo name to confirm a reset"><button class="btn danger" type="button" id="undoReset" disabled>Reset</button></div>
+      <p class="status" id="undoMsg" role="status"></p>`;
+    $("undoConfirm").addEventListener("input", () => { $("undoReset").disabled = $("undoConfirm").value.trim() !== e.full; });
+    $("undoRevert").addEventListener("click", () => runUndo(i, "revert"));
+    $("undoReset").addEventListener("click", () => runUndo(i, "reset"));
+  }
+  async function runUndo(i, how) {
+    if (!S.gh.token) { setStatus("undoMsg", "Connect GitHub in Settings first.", "bad"); return; }
+    const h = store.get("history", []), e = h[i];
+    $$("#undoBox button").forEach(b => { b.disabled = true; });
+    setStatus("undoMsg", how === "revert" ? "Adding a revert commit…" : "Resetting the branch…", "info");
+    try {
+      await G.undoPush(S.gh.token, { full: e.full, branch: e.branch, before: e.before, after: e.after, how, message: `Revert the STEJECT push of ${plural(e.commits, "commit")}` });
+      h[i] = { ...e, undone: how, undoneAt: Date.now() };
+      store.set("history", h);
+      $("undoBox").hidden = true;
+      renderHistory();
+      toast(how === "revert" ? `Reverted. ${e.full} has its old files back, in a new commit.` : `Reset. ${e.full} is back at ${e.before.slice(0, 7)}.`);
+      if (S.mode === "update" && $("repoPick").value === e.full) { S.target = null; compareTarget(); }
+    } catch (err) {
+      setStatus("undoMsg", err.message, "bad");
+      $$("#undoBox button").forEach(b => { b.disabled = false; });
+      $("undoReset").disabled = $("undoConfirm").value.trim() !== e.full;
+    }
+  }
+  $("histTable").addEventListener("click", e => { const b = e.target.closest("[data-undo]"); if (b) showUndo(+b.dataset.undo); });
+  $("undoBox").addEventListener("click", e => { if (e.target.closest("[data-undo-close]")) $("undoBox").hidden = true; });
+
   // ================================================================ HISTORY
   function addHistory(entry) {
     const h = store.get("history", []);
@@ -839,10 +955,19 @@
     const h = store.get("history", []);
     $("histEmpty").hidden = h.length > 0;
     $("histClear").hidden = !h.length;
-    $("histTable").innerHTML = h.length ? `<thead><tr><th>When</th><th>Repo</th><th>Type</th><th>Commits</th><th>Files</th></tr></thead><tbody>${h.map(e => `
+    const seen = new Set();
+    const undoCell = (e, i) => {
+      const latest = !seen.has(e.full); seen.add(e.full);
+      if (e.undone) return `<span class="note">Undone (${e.undone})</span>`;
+      if (!latest || e.mode === "pr" || !e.after) return "";
+      if (e.mode === "new" && !e.created) return "";
+      if (e.mode === "update" && !e.before) return "";
+      return `<button class="btn small" type="button" data-undo="${i}">Undo</button>`;
+    };
+    $("histTable").innerHTML = h.length ? `<thead><tr><th>When</th><th>Repo</th><th>Type</th><th>Commits</th><th>Files</th><th></th></tr></thead><tbody>${h.map((e, i) => `
       <tr><td class="num">${esc(new Date(e.at).toLocaleString())}</td>
       <td><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.full)}</a></td>
-      <td>${e.mode === "pr" ? "Pull request" : e.mode === "update" ? "Update" : "New"}</td><td class="num">${e.commits}</td><td class="num">${e.files ?? ""}</td></tr>`).join("")}</tbody>` : "";
+      <td>${e.mode === "pr" ? "Pull request" : e.mode === "update" ? "Update" : "New"}</td><td class="num">${e.commits}</td><td class="num">${e.files ?? ""}</td><td>${undoCell(e, i)}</td></tr>`).join("")}</tbody>` : "";
   }
   $("histClear").addEventListener("click", () => { store.set("history", null); renderHistory(); toast("History cleared."); });
 
@@ -1120,7 +1245,7 @@
       if (!res.ok) throw new Error("Couldn't download the example (error " + res.status + ").");
       const text = await res.text();
       C.parse(text);
-      setText(text, !!ta.value.trim());
+      setText(text, !!ta.value.trim(), null, `Before opening the "${s.title}" example`);
       S.imported = null;
       setStatus("starterMsg", "Opened the finished example. Read it in Inspect, or use Learn to understand it.", "ok");
     } catch (e) { setStatus("starterMsg", e.message, "bad"); }
@@ -1229,7 +1354,7 @@
         messages.push({ role: "assistant", content: out }, { role: "user", content: `That output has a problem: ${problem}\nOutput the complete manifest again with every planned file. Output only the manifest.` });
       }
       S.plan = null; renderPlan(); S.imported = null;
-      setText(C.serialize(written.m), true);
+      setText(C.serialize(written.m), true, null, `Before writing "${plan.project}"`);
       const st = C.stats(S.m);
       setStatus("ideaMsg", `Done: ${plural(st.files, "file")} in ${plural(st.commits, "commit")}, as planned${written.missing.length ? ` (still missing: ${written.missing.join(", ")})` : ""}. Read the code in Inspect before you push.`, "ok");
       if ($("autoCheck").checked) selfCheck({ fix: true });
@@ -1264,7 +1389,7 @@
       const m2 = C.applyChanges(m0, change);
       const ch = C.changedPaths(before, C.finalFiles(m2));
       if (!ch.added.length && !ch.changed.length && !ch.deleted.length) { setStatus("aiToolMsg", "The AI returned the same files, so nothing changed. Try describing it differently.", "bad"); return; }
-      setText(C.serialize(m2), true, before);
+      setText(C.serialize(m2), true, before, `Before: "${request.slice(0, 80)}"`);
       showChanges(before);
       $("chatText").value = "";
       setStatus("aiToolMsg", `Done: ${describeChange(ch)} in a new commit "${change.commits[change.commits.length - 1].message}". Review the changes before you push.`, "ok");
@@ -1318,7 +1443,7 @@
         let change;
         try { change = C.parse(cleanFence(out)); }
         catch { S.run = { ...S.run, summary: S.run.summary + " (the AI's fix wasn't in the right format)" }; break; }
-        setText(C.serialize(C.applyChanges(S.m, change, { inPlace: S.imported !== "github" })), true, before);
+        setText(C.serialize(C.applyChanges(S.m, change, { inPlace: S.imported !== "github" })), true, before, `Before AI fix ${tries}`);
         r = null;
       }
     } catch (e) {
@@ -1350,7 +1475,7 @@
     });
     if (!c) { setStatus("plMsg", "Nothing to add: the project already has those files.", ""); return; }
     const before = C.finalFiles(S.m);
-    setText(C.serialize(C.applyChanges(S.m, { commits: [c] })), true, before);
+    setText(C.serialize(C.applyChanges(S.m, { commits: [c] })), true, before, "Before the repo polish pack");
     showChanges(before);
     setStatus("plMsg", `Added ${plural(c.files.size, "file")} as the commit "${c.message}".`, "ok");
   });
@@ -1359,7 +1484,7 @@
   function openProject(files, name, from, skipped) {
     const left = Object.values(skipped || {}).reduce((a, b) => a + b, 0);
     if (!files.size) { toast(`No text files to open${left ? ` (left out ${left})` : ""}.`); return false; }
-    setText(C.serialize(C.manifestFromFiles(files, name)), !!ta.value.trim());
+    setText(C.serialize(C.manifestFromFiles(files, name)), !!ta.value.trim(), null, `Before opening ${name}`);
     S.imported = from;
     toast(`Opened ${plural(files.size, "file")} from ${name}${left ? `. Left out ${left} (build folders, binary or very large files)` : ""}.`);
     return true;
@@ -1623,6 +1748,7 @@
     $("usageLimit").value = store.get("usageLimit", "") || "";
     $("prOn").checked = !!store.get("prOn", false); $("prFields").hidden = !$("prOn").checked;
     renderStarters();
+    renderCheckpoints();
     setProvider(S.provider, true);
     if (S.groq.key) checkGroq(true);
     if (S.provider === "custom" && S.custom.url) checkCustom(true);

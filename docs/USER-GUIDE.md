@@ -76,6 +76,14 @@ Files the project (or the GitHub repo, in Update mode) already has are skipped.
 
 To delete a file, the manifest needs `=== DELETE: path/to/file ===` before a `COMMIT` line.
 
+## Checkpoints and undo
+
+- **Checkpoints:** before every AI change, import or restore, STEJECT saves the project on this computer. Open **Checkpoints** on the Ship page to see the timeline and click **Restore** on any of them. The version you replace becomes a checkpoint too, so nothing is lost. Up to 100 are kept (20 MB at most); **Save a checkpoint now** adds one by hand.
+- **Undo a push:** on the **History** page, each repo's latest push has an **Undo** button.
+  - **Revert (recommended):** adds one new commit that puts every file back the way it was. History is kept, so it's always safe.
+  - **Reset:** moves the branch back and deletes the pushed commits from history. You must type the repo name, and STEJECT refuses if someone pushed after you.
+  - A push that **created** the repo can't be reverted to an earlier version (there isn't one). Delete the repo on GitHub instead: Settings → Danger Zone.
+
 ## 4. If a push fails
 
 Nothing on GitHub changes until the very last step, so a failed push never leaves a half-updated branch. Click **Resume push** to continue from the commit that failed.

@@ -290,6 +290,25 @@ async function customMock(route) {
   // ---- 6. history
   await page.click('nav [data-go="history"]');
   ok((await page.$$("#histTable tbody tr")).length === 3, "history lists 3 pushes");
+
+  // ---- 6b. undo a push: revert keeps history; a repo STEJECT created points to GitHub's delete; reset refuses if the branch moved
+  ok((await page.$$("#histTable [data-undo]")).length === 3, "history: each repo's latest push can be undone");
+  const busy = repos["aadvik/busy-app"], headBefore = busy.ref;
+  const busyBase = await page.evaluate(() => JSON.parse(localStorage.getItem("steject.history"))[1].before);
+  await page.click('#histTable [data-undo="1"]');
+  ok((await page.textContent("#undoBox")).includes("Revert (recommended)") && await page.isDisabled("#undoReset"), "undo: revert offered first, reset needs the repo name typed");
+  await page.click("#undoRevert");
+  await page.waitForFunction(() => /Undone \(revert\)/.test(document.querySelector("#histTable").textContent), null, { timeout: 8000 });
+  ok(busy.commits[busy.ref].parents[0] === headBefore && JSON.stringify(treeOf(busy)) === JSON.stringify(busy.trees[busy.commits[busyBase].tree]), "undo: revert adds a commit that restores the old files");
+  ok(lastPatch.force === false, "undo: revert never force-pushes");
+  await page.click('#histTable [data-undo="0"]');
+  ok((await page.textContent("#undoBox")).includes("Delete this repository"), "undo: a repo STEJECT created points to deleting it on GitHub");
+  await page.click("[data-undo-close]");
+  const hello = repos["aadvik/hello-app"], helloOld = hist(hello)[1];
+  const moved = await page.evaluate(([full, b]) => window.SteGitHub.undoPush(window.__steject.S.gh.token, { full, branch: "main", before: b, after: "0".repeat(40), how: "reset" }).then(() => "reset", e => e.message), ["aadvik/hello-app", helloOld]);
+  ok(/changed on GitHub/.test(moved) && hello.ref !== helloOld, "undo: reset refuses when someone pushed after you");
+  await page.evaluate(([full, b, a]) => window.SteGitHub.undoPush(window.__steject.S.gh.token, { full, branch: "main", before: b, after: a, how: "reset" }), ["aadvik/hello-app", helloOld, hello.ref]);
+  ok(hello.ref === helloOld && lastPatch.force === true, "undo: reset moves the branch back");
   await shot({ path: `${OUT}/5-history.png`, fullPage: true });
 
   // ---- 7. chat-reply converter
@@ -431,6 +450,17 @@ async function customMock(route) {
   ok(await page.evaluate(() => window.__steject.S.m.commits.length) === 4 && (await page.textContent("#commits")).includes("Add a remove command"), "change: added as a new commit");
   ok((await page.getAttribute("#vDiff", "aria-pressed")) === "true" && (await page.textContent("#vMeta")).startsWith("+"), "change: the diff opens on the changed file");
   ok((await page.textContent("#checks")).includes("Last AI change") && (await page.textContent("#aiToolMsg")).includes("changed 1 file"), "change: Inspect summarises what changed");
+
+  // ---- 9f2. checkpoints: saved before the AI change, restored in one click
+  await page.click("#cpBox summary");
+  await page.waitForFunction(() => /Before: "add a command/.test(document.querySelector("#cpList").textContent), null, { timeout: 5000 });
+  ok(+(await page.textContent("#cpCount")) >= 2, "checkpoints: saved before AI changes (count shown)");
+  const cpId = await page.evaluate(() => [...document.querySelectorAll("#cpList li")].find(li => /Before: "add a command/.test(li.textContent)).querySelector("[data-cp]").dataset.cp);
+  await page.click(`[data-cp="${cpId}"]`);
+  await page.waitForTimeout(300);
+  ok(await page.evaluate(() => window.__steject.S.m.commits.length) === 3 && (await page.textContent("#cpList")).includes("Before restoring a checkpoint"), "checkpoints: restore brings back the earlier version, and the replaced one is kept");
+  await page.click("#undoBtn"); await page.waitForTimeout(300);
+  ok(await page.evaluate(() => window.__steject.S.m.commits.length) === 4, "checkpoints: Undo after a restore goes back again");
 
   // ---- 9g. repo polish pack
   await page.click("#polishBox summary");

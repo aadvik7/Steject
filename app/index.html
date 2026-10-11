@@ -143,6 +143,14 @@
           <span class="status" id="aiToolMsg" role="status"></span>
         </div>
       </div>
+      <details class="tpl" id="cpBox">
+        <summary>Checkpoints (<span id="cpCount">0</span>) · go back to any earlier version</summary>
+        <div class="stack" style="margin-top:10px">
+          <p class="note">STEJECT saves the project here before every AI change, import or restore. They stay on this computer (newest first, up to 100).</p>
+          <ol class="cplist" id="cpList"></ol>
+          <div class="row"><button class="btn small" id="cpSave" type="button">Save a checkpoint now</button><button class="btn small danger" id="cpClear" type="button">Delete all checkpoints</button></div>
+        </div>
+      </details>
       <details class="tpl" id="polishBox" hidden>
         <summary>Polish the repo (LICENSE, CI, issue templates, AGENTS.md)</summary>
         <div class="stack" style="margin-top:10px">
@@ -312,6 +320,7 @@
   <section class="panel">
     <div class="tablewrap"><table class="hist" id="histTable"></table></div>
     <div class="empty" id="histEmpty">Nothing shipped yet. Your pushes show up here with links to GitHub.</div>
+    <div class="callout warn" id="undoBox" hidden></div>
   </section>
 </main>
 

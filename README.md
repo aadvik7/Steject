@@ -27,6 +27,7 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **One-click push:** creates the repo and pushes real commits through the GitHub API. No Git install, no terminal.
 - **Update mode:** paste changes for an existing repo. STEJECT shows what's new, changed or deleted compared with GitHub, then adds commits on top. It never overwrites history.
 - **Resume:** if your internet drops mid-push, continue from where it stopped.
+- **Checkpoints and undo:** every AI change saves a checkpoint you can restore in one click, and the last push to a repo can be undone (a safe revert commit, or a reset).
 - **Telegram alerts:** get a message when a push succeeds or fails.
 - **Start from an idea, plan first:** describe a project (or pick one of 18 starters) and the AI proposes a file tree and commit plan. Edit it, approve it, and only then are the files written.
 - **Check it runs, and fix it:** Python tests or the main script run in the browser, and web pages open in a sandbox. If it fails, the error goes back to the AI to fix, up to 3 tries.
