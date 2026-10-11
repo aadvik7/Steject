@@ -1,0 +1,6 @@
+# Keep LF line endings everywhere, including Windows checkouts (ship.sh and the
+# manifest parser expect \n, and it stops CRLF warnings on every commit).
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.woff2 binary

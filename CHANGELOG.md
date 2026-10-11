@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Ship page: Paste and Inspect are now the same height, and Push runs full width underneath with its fields lined up in two columns. The code viewer fills its box.
+- Secret scan also catches Groq, Hugging Face and npm tokens.
+- Groq: if a model can't produce strict JSON (quiz, commit plan), STEJECT retries once without JSON mode instead of failing.
+- Web version: the offline cache is named after each build, so a new deploy is picked up without a manual version bump.
+- Maintenance: newer GitHub Actions (fewer deprecation warnings), consistent LF line endings, test screenshots kept out of the repo.
+
 ## 1.1.0 — 2026-10-11
 
 - **Start from an idea:** describe a project in a sentence and the AI writes it as a manifest (3 to 9 files, 3 to 5 commits). The result goes straight into Inspect so you can read it before pushing. If the AI breaks the format, STEJECT sends the problem back and retries up to twice.

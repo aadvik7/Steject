@@ -302,7 +302,9 @@
     try { return await fn(ctrl.signal); }
     finally { if (aiAbort === ctrl) aiAbort = null; onStop && onStop(); }
   }
-  const waitNote = (id) => sec => setStatus(id, `Groq's free limit needs a short pause. Continuing in ${sec}s…`, "info");
+  const pauseText = sec => `Groq's free limit needs a short pause. Continuing in ${sec}s…`;
+  const waitNote = id => sec => setStatus(id, pauseText(sec), "info");
+  const waitThinking = out => sec => { out.innerHTML = `<p class="thinking">${pauseText(sec)}</p>`; };
 
   $("fixAiBtn").addEventListener("click", async () => {
     const raw = ta.value;
@@ -666,7 +668,7 @@
     let raf = 0;
     try {
       learnText = await aiRun(signal => llm().chat(aiModel(), messages, {
-        signal, maxTokens: 2500, onWait: sec => { out.innerHTML = `<p class="thinking">Groq's free limit needs a short pause. Continuing in ${sec}s…</p>`; }, ...opts,
+        signal, maxTokens: 2500, onWait: waitThinking(out), ...opts,
         onText: t => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; out.innerHTML = `<div class="prose">${md(t)}</div>`; }); },
       }));
       cancelAnimationFrame(raf);
@@ -693,7 +695,7 @@
     out.innerHTML = `<p class="thinking">Writing 5 questions about your code…</p>`;
     learnBusy(true);
     try {
-      const raw = await aiRun(signal => llm().chat(aiModel(), AI.prompts.quiz(C.digest(S.m, 9000), 5), { signal, json: true, temperature: 0.4, maxTokens: 2500, onWait: sec => { out.innerHTML = `<p class="thinking">Groq's free limit needs a short pause. Continuing in ${sec}s…</p>`; } }));
+      const raw = await aiRun(signal => llm().chat(aiModel(), AI.prompts.quiz(C.digest(S.m, 9000), 5), { signal, json: true, temperature: 0.4, maxTokens: 2500, onWait: waitThinking(out) }));
       let qs = C.extractJson(raw);
       qs = (Array.isArray(qs) ? qs : qs.questions || []).filter(q => q && q.q && Array.isArray(q.options) && q.options.length >= 2 && Number.isInteger(+q.answer) && +q.answer < q.options.length).slice(0, 5);
       if (!qs.length) throw new Error("The model didn't return usable questions. Try again, or pick a bigger model in Settings.");

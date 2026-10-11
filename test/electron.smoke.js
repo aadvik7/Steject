@@ -41,7 +41,7 @@ const fakeOllama = http.createServer((req, res) => {
   ok(fonts.every(Boolean), "bundled fonts load offline");
   const blocked = await win.evaluate(async () => { try { await fetch("https://example.com"); return false; } catch { return true; } });
   ok(blocked, "content security policy blocks unknown hosts");
-  await win.screenshot({ path: path.join(process.env.SHOTS || __dirname, "electron.png") });
+  await win.screenshot({ path: path.join(process.env.SHOTS || path.join(__dirname, "shots"), "electron.png") });
   await app.close();
   fakeOllama.close();
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

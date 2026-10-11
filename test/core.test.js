@@ -52,6 +52,10 @@ test("secret scan", () => {
   assert.equal(C.scanSecrets(C.parse(SAMPLE)).length, 0);
   const env = C.parse('=== FILE: .env.example ===\nAPI_KEY=your-key-here');
   assert.equal(C.scanSecrets(env).length, 0, "placeholders are fine");
+  const keyed = (name, key) => assert.equal(C.scanSecrets(C.parse(`=== FILE: k.js ===\nconst k = process.env.K || ${key};`))[0]?.name, name);
+  keyed("Groq API key", "gsk_" + "a1".repeat(26));
+  keyed("Hugging Face token", "hf_" + "b2".repeat(17));
+  keyed("npm token", "npm_" + "c3".repeat(18));
 });
 
 test("converts a typical ChatGPT reply", () => {

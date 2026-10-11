@@ -126,16 +126,17 @@
 
     <!-- 3. SHIP -->
     <section class="panel ship" aria-labelledby="h-ship">
-      <div class="step"><span class="n">3</span><h2 id="h-ship">Push</h2></div>
-      <div class="seg" role="group" aria-label="Where to push">
-        <button type="button" id="modeNew" aria-pressed="true">New repo</button>
-        <button type="button" id="modeUpd" aria-pressed="false">Update a repo</button>
-        <button type="button" id="modeKit" aria-pressed="false">Ship kit</button>
+      <div class="step"><span class="n">3</span><h2 id="h-ship">Push</h2>
+        <div class="seg modes" role="group" aria-label="Where to push">
+          <button type="button" id="modeNew" aria-pressed="true">New repo</button>
+          <button type="button" id="modeUpd" aria-pressed="false">Update a repo</button>
+          <button type="button" id="modeKit" aria-pressed="false">Ship kit</button>
+        </div>
       </div>
 
       <label class="override" id="overrideRow" hidden><input id="override" type="checkbox"> I checked the flagged lines. They are not real secrets. Push anyway.</label>
 
-      <div id="paneGh" class="stack">
+      <div id="paneGh" class="pushcols">
         <div class="acct off" id="acctBox">
           <span class="who" id="acctText">GitHub is not connected.</span>
           <button type="button" class="btn small" data-go="settings" data-focus="ghToken" id="acctBtn">Connect</button>
@@ -162,7 +163,7 @@
           <div class="row"><button class="btn" id="replaceYes" type="button">Replace it and push</button><button class="btn" id="replaceNo" type="button">Cancel</button></div>
         </div>
 
-        <div class="row">
+        <div class="row pushrow">
           <button class="btn primary" id="pushBtn" type="button">Push to GitHub</button>
           <button class="btn" id="resumeBtn" type="button" hidden>Resume push</button>
           <span class="note"><span class="kbd">Ctrl</span> + <span class="kbd">Enter</span></span>

@@ -85,7 +85,7 @@ Files and deletes belong to the next `COMMIT` line. Full prompts: [PROMPT_TEMPLA
 - Tokens are encrypted with your operating system's keychain (desktop app) and stored only on your computer.
 - Network access is limited to `api.github.com`, `api.telegram.org`, `api.groq.com` (only if you add a Groq key) and your local Ollama. Anything else is blocked by the app's security policy.
 - With Groq, the ideas and project text you use AI on are sent to Groq. Use Ollama for code that must stay private.
-- Pushing stops if a possible secret is found: GitHub, AWS, OpenAI-style, Google, Slack or Stripe keys, private keys, or hardcoded passwords.
+- Pushing stops if a possible secret is found: GitHub, AWS, OpenAI-style, Groq, Google, Hugging Face, npm, Slack or Stripe keys, private keys, or hardcoded passwords.
 - STEJECT never force-pushes over existing history. Replacing GitHub's single "Initial commit" requires your confirmation.
 
 ## Development

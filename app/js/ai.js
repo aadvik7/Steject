@@ -177,8 +177,9 @@
         let res;
         try { res = await send(); }
         catch (e) {
-          // a model that doesn't accept an optional setting: drop it and try once more
-          if (e.status === 400 && /response_format|reasoning/i.test(e.detail || "") && (body.response_format || body.reasoning_effort)) {
+          // a model that doesn't accept an optional setting, or can't produce strict JSON:
+          // drop the extras and try once more (callers already pull JSON out of plain text)
+          if (e.status === 400 && /response_format|reasoning|json/i.test(e.detail || "") && (body.response_format || body.reasoning_effort)) {
             delete body.response_format; delete body.reasoning_effort;
             res = await send();
           } else throw e;

@@ -98,7 +98,8 @@ nav.tabs-main button:focus-visible { outline: 2px solid var(--accent); outline-o
 
 .grid { display: grid; gap: 20px; grid-template-columns: 1fr; grid-template-areas: "paste" "inspect" "ship"; }
 @media (min-width: 1000px) {
-  .grid { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); grid-template-areas: "paste inspect" "ship inspect"; align-items: start; }
+  /* Paste and Inspect sit side by side at the same height; Push runs full width underneath */
+  .grid { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); grid-template-areas: "paste inspect" "ship ship"; align-items: stretch; }
 }
 .paste { grid-area: paste; } .inspect { grid-area: inspect; } .ship { grid-area: ship; }
 
@@ -294,3 +295,26 @@ ol.how { margin: 0; padding-left: 20px; display: flex; flex-direction: column; g
 * { font-variant-ligatures: none !important; font-feature-settings: "liga" 0, "calt" 0 !important; }
 
 #ideaText { min-height: 84px; line-height: 1.5; font-weight: 400; }
+
+/* ---------------------------------------------------------------- Ship page: three boxes that line up */
+.paste textarea#manifest { flex: 1 1 auto; }
+.inspect .split { flex: 1 1 auto; min-height: 0; }
+.inspect .viewer { max-height: 700px; }
+.inspect .viewer .code { flex: 1 1 auto; min-height: 0; max-height: none; }
+.step .modes { margin-left: auto; }
+.pushcols { display: grid; gap: 14px 20px; grid-template-columns: minmax(0, 1fr); align-content: start; }
+.pushcols #newFields { display: contents; }
+.pushcols #log { max-height: 260px; overflow: auto; }
+@media (min-width: 1000px) {
+  /* same 5 : 7 split as the boxes above, so the columns line up */
+  .pushcols { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  .pushcols #acctBox { grid-column: 1; grid-row: 1; }
+  .pushcols label[for="repoName"] { grid-column: 1; grid-row: 2; }
+  .pushcols label[for="repoDesc"] { grid-column: 2; grid-row: 2; }
+  .pushcols [aria-label="Visibility"] { grid-column: 1; grid-row: 3; align-self: end; justify-self: start; }
+  .pushcols #updFields { grid-column: 1; grid-row: 2 / span 2; }
+  .pushcols #replaceBox { grid-column: 2; grid-row: 2; }
+  .pushcols .pushrow { grid-column: 2; grid-row: 3; align-self: end; }
+  .pushcols #log { grid-column: 1 / -1; grid-row: 4; }
+  .pushcols #doneBox { grid-column: 1 / -1; grid-row: 5; }
+}

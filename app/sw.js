@@ -1,6 +1,9 @@
 // STEJECT service worker: lets the web version install as an app and open offline.
 // Serves the app shell from cache, refreshing it in the background.
-const CACHE = "steject-shell-v2";
+// The cache is named after the build, so every deploy starts a fresh one (no manual bump).
+try { importScripts("js/build-info.js"); } catch {}
+const BUILD = self.STE_BUILD || {};
+const CACHE = "steject-shell-" + ([BUILD.version, BUILD.commit || BUILD.built].filter(Boolean).join("-") || "dev");
 const SHELL = [
   "./", "index.html", "manifest.webmanifest",
   "css/app.css", "css/fonts.css",
