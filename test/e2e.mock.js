@@ -109,6 +109,28 @@ async function ollama(route) {
   return route.fulfill({ status: 404, headers: cors, body: "{}" });
 }
 
+// ------------------------------------------------------------------ Groq mock (OpenAI-compatible, streaming)
+const GROQ_KEY = "gsk_" + "g".repeat(52);
+let groqCalls = [], groqPlan = [];
+async function groqMock(route) {
+  const req = route.request(), u = new URL(req.url());
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" };
+  const json = { ...cors, "content-type": "application/json" };
+  if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+  if ((req.headers()["authorization"] || "") !== "Bearer " + GROQ_KEY) return route.fulfill({ status: 401, headers: json, body: JSON.stringify({ error: { message: "Invalid API Key" } }) });
+  if (u.pathname === "/openai/v1/models") return route.fulfill({ status: 200, headers: json, body: JSON.stringify({ data: [{ id: "llama-3.3-70b-versatile" }, { id: "openai/gpt-oss-120b" }, { id: "whisper-large-v3" }, { id: "llama-3.1-8b-instant" }] }) });
+  if (u.pathname === "/openai/v1/chat/completions") {
+    groqCalls.push(JSON.parse(req.postData()));
+    const step = groqPlan.length ? groqPlan.shift() : { text: "ok" };
+    if (step.status) return route.fulfill({ status: step.status, headers: json, body: JSON.stringify({ error: { message: step.message || "error" } }) });
+    const parts = step.text.match(/[\s\S]{1,50}/g) || [""];
+    const sse = parts.map(c => "data: " + JSON.stringify({ choices: [{ delta: { content: c } }] }) + "\n\n").join("")
+      + "data: " + JSON.stringify({ choices: [{ delta: {}, finish_reason: step.finish || "stop" }] }) + "\n\ndata: [DONE]\n\n";
+    return route.fulfill({ status: 200, headers: { ...cors, "content-type": "text/event-stream" }, body: sse });
+  }
+  return route.fulfill({ status: 404, headers: json, body: "{}" });
+}
+
 (async () => {
   await new Promise(r => server.listen(0, r));
   const base = `http://localhost:${server.address().port}/`;
@@ -116,6 +138,7 @@ async function ollama(route) {
   const ctx = await browser.newContext({ viewport: { width: 1360, height: 1000 } });
   await ctx.route("https://api.github.com/**", gh);
   await ctx.route("http://localhost:11434/**", ollama);
+  await ctx.route("https://api.groq.com/**", groqMock);
   await ctx.route("https://api.telegram.org/**", route => {
     const r = route.request(); const cors = { "access-control-allow-origin": "*", "content-type": "application/json" };
     if (r.url().endsWith("/getUpdates")) return route.fulfill({ status: 200, headers: cors, body: JSON.stringify({ ok: true, result: [{ message: { chat: { id: 4242, first_name: "Aadvik" } } }] }) });
@@ -242,6 +265,67 @@ async function ollama(route) {
   await page.click('.q[data-q="1"] button[data-o="1"]');
   ok((await page.textContent("#quizScore")).includes("1/2"), "quiz: answers marked and scored 1/2");
   await shot({ path: `${OUT}/6-learn.png`, fullPage: true });
+
+  // ---- 9b. paste hint for code copied without file names
+  await page.click('nav [data-go="ship"]');
+  await page.fill("#manifest", "import unittest\n\nfrom calculator import add\n\nclass T(unittest.TestCase):\n    pass\n");
+  await page.waitForTimeout(300);
+  ok((await page.textContent("#fixText")).includes("no file names"), "pasted code with no file names: plain-words hint");
+
+  // ---- 9c. Groq: connect, bad key, good key
+  await page.click("#chipAi");
+  await page.click("#provGroq");
+  await page.fill("#groqKey", "gsk_" + "x".repeat(52)); await page.click("#groqSave"); await page.waitForTimeout(300);
+  ok((await page.textContent("#groqMsg")).includes("rejected the API key"), "Groq: wrong key gives a clear error");
+  ok(!(await page.evaluate(() => localStorage.getItem("steject.secret.groqKey"))), "Groq: wrong key is not saved");
+  await page.fill("#groqKey", GROQ_KEY); await page.click("#groqSave"); await page.waitForTimeout(400);
+  ok((await page.textContent("#groqMsg")).includes("Key works"), "Groq: good key accepted");
+  ok((await page.textContent("#chipAi")) === "AI: groq", "Groq: chip shows AI: groq");
+  const gm = await page.textContent("#groqModels");
+  ok(gm.includes("llama-3.3-70b-versatile") && gm.includes("In use") && !gm.includes("whisper"), "Groq: chat models listed, default in use, speech models hidden");
+  await shot({ path: `${OUT}/9-groq-settings.png`, fullPage: true });
+
+  // ---- 9d. idea to project (first reply broken, second reply good: repair loop)
+  await page.click('nav [data-go="ship"]');
+  await page.click("#ideaBox summary");
+  ok(!(await page.isDisabled("#ideaGo")), "idea box enabled once an AI helper is ready");
+  const good = "=== PROJECT: todo-cli ===\n=== FILE: todo.py ===\nimport json\n\ndef add(items, text):\n    items.append(text)\n    return items\n=== COMMIT: Add todo core ===\n=== FILE: test_todo.py ===\nfrom todo import add\n\ndef test_add():\n    assert add([], 'a') == ['a']\n=== COMMIT: Add tests ===\n=== FILE: README.md ===\n# todo-cli\n=== COMMIT: Add README ===";
+  groqCalls = []; groqPlan = [{ text: "Sure! Here is your project:\n\ntodo.py\nimport json" }, { text: good }];
+  await page.fill("#ideaText", "A Python command-line to-do app with tests");
+  await page.click("#ideaGo");
+  await page.waitForFunction(() => /Done:/.test(document.querySelector("#ideaMsg").textContent), null, { timeout: 15000 });
+  ok(groqCalls.length === 2, "idea: broken first reply was sent back for repair (2 calls)");
+  ok(JSON.stringify(groqCalls[1].messages.map(m => m.role)) === '["system","user","assistant","user"]' && /problem/.test(groqCalls[1].messages[3].content), "idea: repair request includes the parse error");
+  ok(groqCalls[0].model === "llama-3.3-70b-versatile" && groqCalls[0].stream === true && groqCalls[0].max_tokens === 4500, "idea: request uses the chosen model, streaming and a token cap");
+  ok((await page.textContent("#projName")).includes("todo-cli") && (await page.textContent("#checks")).includes("Valid"), "idea: project appears as a valid manifest");
+  ok(await page.isVisible("#undoBtn"), "idea: undo offered");
+  await shot({ path: `${OUT}/10-idea.png`, fullPage: true });
+
+  // ---- 9e. Groq limits: short wait then success; daily limit message; cut-off reply
+  groqCalls = [];
+  groqPlan = [{ status: 429, message: "Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_x` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 11000, Requested 3000. Please try again in 1.2s. Need more tokens?" }, { text: good }];
+  await page.fill("#ideaText", "Another small to-do app");
+  await page.click("#ideaGo");
+  await page.waitForFunction(() => /Done:/.test(document.querySelector("#ideaMsg").textContent), null, { timeout: 15000 });
+  ok(groqCalls.length === 2, "rate limit (per minute): waited the time Groq asked for, then succeeded");
+  groqPlan = [{ status: 429, message: "Rate limit reached for model `x` on tokens per day (TPD): Limit 100000, Used 99000, Requested 3000. Please try again in 7m12s." }];
+  await page.click("#ideaGo"); await page.waitForTimeout(500);
+  ok((await page.textContent("#ideaMsg")).includes("today's free Groq limit"), "rate limit (per day): plain-words message, no waiting");
+  groqPlan = [{ text: good.slice(0, 120), finish: "length" }];
+  await page.click("#ideaGo"); await page.waitForTimeout(600);
+  ok((await page.textContent("#ideaMsg")).includes("cut off"), "cut-off reply: explained instead of a half project");
+
+  // ---- 9f. Learn through Groq
+  await page.fill("#manifest", good);
+  await page.waitForTimeout(300);
+  groqCalls = []; groqPlan = [{ text: "## What it does\nAdds items.\n\n```py\nitems.append(text)\n```" }];
+  await page.click('nav [data-go="learn"]');
+  await page.click("#lExplain");
+  await page.waitForSelector("#learnOut .prose h2", { timeout: 8000 });
+  ok(groqCalls.length === 1 && (await page.textContent("#learnOut")).includes("What it does"), "Learn works through Groq");
+  await page.click("#chipAi"); await page.click("#groqRemove");
+  ok((await page.textContent("#chipAi")) === "AI: off" && !(await page.evaluate(() => localStorage.getItem("steject.secret.groqKey"))), "removing the Groq key turns AI off and deletes it");
+  await page.click("#provOllama"); await page.waitForTimeout(400);
 
   // ---- 10. secret blocks push
   await page.click('nav [data-go="ship"]');

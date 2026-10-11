@@ -83,8 +83,19 @@
     ctx: null, lastJob: null,
     busy: false,
     ai: { url: store.get("aiUrl", "http://localhost:11434"), ok: false, models: [], model: store.get("aiModel", null), reason: null },
+    provider: store.get("aiProvider", "ollama"),          // "ollama" | "groq"
+    groq: { key: "", bad: false, models: [], model: store.get("groqModel", null) },
     undo: null,
   };
+
+  // ---- which AI helper is active (local Ollama or free cloud Groq)
+  function aiOn() { return S.provider === "groq" ? !!(S.groq.key && S.groq.model && !S.groq.bad) : !!(S.ai.ok && S.ai.model); }
+  function aiModel() { return S.provider === "groq" ? S.groq.model : S.ai.model; }
+  function aiLabel() { return S.provider === "groq" ? "Groq" : "your local AI"; }
+  function llm() { return S.provider === "groq" ? AI.groq(S.groq.key) : AI.ollama(S.ai.url); }
+  function ollama() { return AI.ollama(S.ai.url); }
+  // how much text the active helper can rewrite in one go (free cloud has a per-minute token cap)
+  function repairLimit() { return S.provider === "groq" ? 12000 : 60000; }
 
   // ================================================================ navigation
   function go(page, focusId) {
@@ -93,7 +104,9 @@
     if (location.hash !== "#" + page) history.replaceState(null, "", "#" + page);
     if (page === "learn") renderLearn();
     if (page === "history") renderHistory();
-    if (page === "settings" && !S.ai.ok) checkAi();
+    if (focusId === "groqKey") setProvider("groq");
+    else if (focusId === "aiUrl" && S.provider === "groq") focusId = "groqKey";
+    if (page === "settings" && S.provider === "ollama" && !S.ai.ok) checkAi();
     window.scrollTo(0, 0);
     if (focusId) setTimeout(() => { const el = $(focusId); if (el && !el.closest("[hidden]")) el.focus(); }, 30);
   }
@@ -141,9 +154,16 @@
     const { m, hits, error } = S;
     $("convertBox").hidden = !(error && S.isChat);
     $("fixBox").hidden = !(error && !S.isChat && ta.value.trim());
-    $("fixAiBtn").disabled = !S.ai.ok || !S.ai.model;
-    $("fixText").textContent = S.ai.ok && S.ai.model ? "The format is broken. Your local AI can try to repair it." : "The format is broken. Ask the chat AI to resend it using the STEJECT prompt, or set up local AI in Settings to repair it here.";
-    $("aiTools").hidden = !(m && S.ai.ok && S.ai.model);
+    const aiReady = aiOn();
+    $("fixAiBtn").disabled = !aiReady;
+    const hint = error && !S.isChat ? C.pasteHint(ta.value) : null;
+    $("fixText").textContent = hint
+      ? hint + (aiReady ? " Or let the AI try to repair it." : "")
+      : aiReady ? "The format is broken. Your AI helper can try to repair it."
+      : "The format is broken. Ask the chat AI to resend it using the STEJECT prompt, or set up an AI helper in Settings to repair it here.";
+    $("aiTools").hidden = !(m && aiReady);
+    $("ideaNoAi").hidden = aiReady;
+    $("ideaGo").disabled = !aiReady || !!aiAbort;
 
     const errs = $("errors"), checks = $("checks"), list = $("commits");
     errs.innerHTML = "";
@@ -270,7 +290,7 @@
       $("convertBox").hidden = true;
       Object.assign(S, { isChat: false });
       $("fixBox").hidden = false;
-      $("fixText").textContent = e.message + (S.ai.ok ? " Your local AI can try instead." : "");
+      $("fixText").textContent = e.message + (aiOn() ? " Your AI helper can try instead." : "");
     }
   });
 
@@ -282,17 +302,17 @@
     try { return await fn(ctrl.signal); }
     finally { if (aiAbort === ctrl) aiAbort = null; onStop && onStop(); }
   }
-  const llm = () => AI.ollama(S.ai.url);
+  const waitNote = (id) => sec => setStatus(id, `Groq's free limit needs a short pause. Continuing in ${sec}s…`, "info");
 
   $("fixAiBtn").addEventListener("click", async () => {
     const raw = ta.value;
-    if (raw.length > 60000) { $("fixText").textContent = "This is too long for a local model to repair in one go. Ask the chat AI to resend it in the STEJECT format."; return; }
+    if (raw.length > repairLimit()) { $("fixText").textContent = `This is too long for ${aiLabel()} to repair in one go. Ask the chat AI to resend it in the STEJECT format.`; return; }
     $("fixAiBtn").disabled = true; $("fixCancel").hidden = false; $("fixProg").hidden = false;
     const bar = $("fixProg").firstElementChild;
-    $("fixText").textContent = "Your local AI is rewriting it. This can take a minute…";
+    $("fixText").textContent = `${S.provider === "groq" ? "Groq is" : "Your local AI is"} rewriting it. This can take a minute…`;
     try {
-      const out = await aiRun(signal => llm().chat(S.ai.model, AI.prompts.fixManifest(raw), {
-        signal, temperature: 0, ctx: 16384,
+      const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.fixManifest(raw), {
+        signal, temperature: 0, ctx: 16384, maxTokens: Math.min(16000, Math.ceil(raw.length / 3) + 800), onWait: waitNote("fixText"),
         onText: t => { bar.style.width = Math.min(98, Math.round(t.length / raw.length * 100)) + "%"; },
       }), () => { $("fixCancel").hidden = true; $("fixProg").hidden = true; bar.style.width = "0"; });
       let text = out.trim().replace(/^```[a-z]*\n?/i, "").replace(/\n?```\s*$/, "");
@@ -301,8 +321,8 @@
       toast("Repaired. Check every file before pushing: small models can make mistakes.");
     } catch (e) {
       if (e.name === "AbortError") { $("fixText").textContent = "Stopped."; }
-      else $("fixText").textContent = "The local AI couldn't repair it: " + e.message;
-    } finally { $("fixAiBtn").disabled = !S.ai.ok; }
+      else $("fixText").textContent = "The AI couldn't repair it: " + e.message;
+    } finally { $("fixAiBtn").disabled = !aiOn(); }
   });
   $("fixCancel").addEventListener("click", () => aiAbort && aiAbort.abort());
 
@@ -311,7 +331,7 @@
     setStatus("aiToolMsg", "Writing README…", "info");
     $("aiReadme").disabled = $("aiPlan").disabled = true;
     try {
-      const out = await aiRun(signal => llm().chat(S.ai.model, AI.prompts.readme(C.digest(S.m, 10000)), { signal, temperature: 0.3 }));
+      const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.readme(C.digest(S.m, 10000)), { signal, temperature: 0.3, maxTokens: 3000, onWait: waitNote("aiToolMsg") }));
       const readme = out.trim().replace(/^```(?:markdown|md)?\n/i, "").replace(/\n```\s*$/, "") + "\n";
       const exists = C.finalFiles(S.m).has("README.md");
       const m2 = { project: S.m.project, commits: [...S.m.commits, { message: exists ? "Update README" : "Add README", files: new Map([["README.md", readme]]) }] };
@@ -329,7 +349,7 @@
     $("aiReadme").disabled = $("aiPlan").disabled = true;
     try {
       const files = C.finalFiles(S.m);
-      const out = await aiRun(signal => llm().chat(S.ai.model, AI.prompts.commitPlan(C.digest(S.m, 6000)), { signal, json: true, temperature: 0.1 }));
+      const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.commitPlan(C.digest(S.m, 6000)), { signal, json: true, temperature: 0.1, maxTokens: 2000, onWait: waitNote("aiToolMsg") }));
       const plan = C.extractJson(out).commits;
       if (!Array.isArray(plan) || !plan.length) throw new Error("The model returned an empty plan.");
       const used = new Set(), commits = [];
@@ -620,7 +640,7 @@
   // ================================================================ LEARN
   let learnSel = null, learnText = "";
   function renderLearn() {
-    const aiReady = S.ai.ok && S.ai.model;
+    const aiReady = aiOn();
     $("learnNoAi").hidden = !!aiReady;
     $("learnNoProj").hidden = !!S.m;
     $("learnBody").hidden = !S.m;
@@ -636,17 +656,17 @@
 
   function learnBusy(on) {
     $("lStop").hidden = !on;
-    ["lExplain", "lQuiz", "lResume"].forEach(id => { $(id).disabled = on || !(S.ai.ok && S.ai.model); });
+    ["lExplain", "lQuiz", "lResume"].forEach(id => { $(id).disabled = on || !aiOn(); });
   }
   async function streamTo(title, messages, opts) {
     $("learnTitle").textContent = title; $("lCopy").hidden = true;
     const out = $("learnOut");
-    out.innerHTML = `<p class="thinking">Thinking… the first answer can take a moment while the model loads.</p>`;
+    out.innerHTML = `<p class="thinking">${S.provider === "groq" ? "Thinking…" : "Thinking… the first answer can take a moment while the model loads."}</p>`;
     learnBusy(true);
     let raf = 0;
     try {
-      learnText = await aiRun(signal => llm().chat(S.ai.model, messages, {
-        signal, ...opts,
+      learnText = await aiRun(signal => llm().chat(aiModel(), messages, {
+        signal, maxTokens: 2500, onWait: sec => { out.innerHTML = `<p class="thinking">Groq's free limit needs a short pause. Continuing in ${sec}s…</p>`; }, ...opts,
         onText: t => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; out.innerHTML = `<div class="prose">${md(t)}</div>`; }); },
       }));
       cancelAnimationFrame(raf);
@@ -673,7 +693,7 @@
     out.innerHTML = `<p class="thinking">Writing 5 questions about your code…</p>`;
     learnBusy(true);
     try {
-      const raw = await aiRun(signal => llm().chat(S.ai.model, AI.prompts.quiz(C.digest(S.m, 9000), 5), { signal, json: true, temperature: 0.4 }));
+      const raw = await aiRun(signal => llm().chat(aiModel(), AI.prompts.quiz(C.digest(S.m, 9000), 5), { signal, json: true, temperature: 0.4, maxTokens: 2500, onWait: sec => { out.innerHTML = `<p class="thinking">Groq's free limit needs a short pause. Continuing in ${sec}s…</p>`; } }));
       let qs = C.extractJson(raw);
       qs = (Array.isArray(qs) ? qs : qs.questions || []).filter(q => q && q.q && Array.isArray(q.options) && q.options.length >= 2 && Number.isInteger(+q.answer) && +q.answer < q.options.length).slice(0, 5);
       if (!qs.length) throw new Error("The model didn't return usable questions. Try again, or pick a bigger model in Settings.");
@@ -792,7 +812,7 @@
     S.ai.url = $("aiUrl").value.trim() || "http://localhost:11434";
     store.set("aiUrl", S.ai.url);
     setStatus("aiMsg", "Checking…", "info");
-    const st = await llm().status();
+    const st = await ollama().status();
     S.ai.ok = st.ok; S.ai.reason = st.reason; S.ai.models = st.models || [];
     if (st.ok && (!S.ai.model || !S.ai.models.some(m => m.name === S.ai.model))) {
       const pref = AI.MODELS.map(x => x.id).find(id => S.ai.models.some(m => m.name === id));
@@ -806,6 +826,12 @@
   }
   function renderAiChip() {
     const chip = $("chipAi");
+    if (S.provider === "groq") {
+      chip.classList.toggle("on", aiOn());
+      chip.classList.toggle("warn", !aiOn() && !!S.groq.key);
+      chip.textContent = aiOn() ? "AI: groq" : S.groq.key ? (S.groq.bad ? "AI: bad key" : "AI: no model") : "AI: off";
+      return;
+    }
     chip.classList.toggle("on", S.ai.ok && !!S.ai.model);
     chip.classList.toggle("warn", S.ai.ok && !S.ai.model);
     chip.textContent = S.ai.ok ? (S.ai.model ? "AI: " + S.ai.model.split(":")[0] : "AI: no model") : "AI: off";
@@ -830,7 +856,7 @@
       pullAbort = new AbortController();
       $("pullBox").hidden = false; renderModels();
       try {
-        await llm().pull(id, p => {
+        await ollama().pull(id, p => {
           const pct = p.total ? Math.round((p.completed || 0) / p.total * 100) : null;
           $("pullText").textContent = `${id}: ${p.status}${pct != null ? ` · ${pct}% of ${gb(p.total)}` : ""}`;
           if (pct != null) $("pullBar").style.width = pct + "%";
@@ -849,6 +875,125 @@
   $("aiCheck").addEventListener("click", checkAi);
   $("aiUrl").addEventListener("change", checkAi);
 
+
+  // ================================================================ SETTINGS: AI provider + Groq
+  function setProvider(name, quiet) {
+    S.provider = name === "groq" ? "groq" : "ollama";
+    store.set("aiProvider", S.provider);
+    $("provGroq").setAttribute("aria-pressed", S.provider === "groq");
+    $("provOllama").setAttribute("aria-pressed", S.provider === "ollama");
+    $("groqBox").hidden = S.provider !== "groq";
+    $("ollamaBox").hidden = S.provider !== "ollama";
+    renderGroq(); renderAiChip();
+    if (!quiet) { render(); renderLearn(); if (S.provider === "ollama" && !S.ai.ok) checkAi(); }
+  }
+  $("provGroq").addEventListener("click", () => setProvider("groq"));
+  $("provOllama").addEventListener("click", () => setProvider("ollama"));
+
+  function renderGroq() {
+    $("groqRemove").hidden = !S.groq.key;
+    const ids = S.groq.models.length ? S.groq.models : AI.GROQ_MODELS.map(m => m.id);
+    const pref = AI.GROQ_MODELS.map(m => m.id);
+    const sorted = [...ids].sort((a, b) => {
+      const ia = pref.indexOf(a), ib = pref.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+    $("groqModels").innerHTML = sorted.map(id => {
+      const note = (AI.GROQ_MODELS.find(m => m.id === id) || {}).note || "Available on your Groq account.";
+      return `<div class="model ${id === S.groq.model ? "sel" : ""}">
+        <span class="mn">${esc(id)}</span><span class="md">${esc(note)}</span>
+        <span class="ma">${id === S.groq.model ? `<span class="tag">In use</span>` : `<button type="button" class="btn small" data-groq-use="${esc(id)}">Use</button>`}</span>
+      </div>`;
+    }).join("");
+  }
+  $("groqModels").addEventListener("click", e => {
+    const b = e.target.closest("[data-groq-use]");
+    if (!b) return;
+    S.groq.model = b.dataset.groqUse; store.set("groqModel", S.groq.model);
+    renderGroq(); renderAiChip(); render(); renderLearn(); toast(`Using ${S.groq.model}`);
+  });
+
+  // quiet = boot-time check: only a rejected key changes anything; being offline is not an error
+  async function checkGroq(quiet) {
+    if (!S.groq.key) return;
+    if (!quiet) setStatus("groqMsg", "Checking the key…", "info");
+    const st = await AI.groq(S.groq.key).status();
+    if (st.ok) {
+      S.groq.bad = false; S.groq.models = st.models;
+      if (!S.groq.model || !st.models.includes(S.groq.model)) {
+        S.groq.model = AI.GROQ_MODELS.map(m => m.id).find(id => st.models.includes(id)) || st.models[0] || null;
+        store.set("groqModel", S.groq.model);
+      }
+      if (!quiet) setStatus("groqMsg", `Key works · ${plural(st.models.length, "model")} available`, "ok");
+    } else if (st.reason === "badkey") {
+      S.groq.bad = true;
+      setStatus("groqMsg", st.message, "bad");
+    } else if (!quiet) setStatus("groqMsg", st.message, "bad");
+    renderGroq(); renderAiChip(); render(); renderLearn();
+    return st;
+  }
+  $("groqSave").addEventListener("click", async () => {
+    const key = $("groqKey").value.trim();
+    if (!key) { setStatus("groqMsg", "Paste your Groq API key first.", "bad"); return; }
+    if (/\s/.test(key) || key.length < 20) { setStatus("groqMsg", "That doesn't look like a Groq key. It starts with gsk_ and has no spaces.", "bad"); return; }
+    S.groq.key = key; S.groq.bad = false;
+    const st = await checkGroq(false);
+    if (st && st.ok) { await secrets.set("groqKey", key); toast("Groq connected."); }
+    else if (st && st.reason === "badkey") S.groq.key = "";
+    renderGroq(); renderAiChip();
+  });
+  $("groqRemove").addEventListener("click", async () => {
+    await secrets.del("groqKey");
+    Object.assign(S.groq, { key: "", bad: false, models: [] });
+    $("groqKey").value = ""; setStatus("groqMsg", "Key removed.", "");
+    renderGroq(); renderAiChip(); render(); renderLearn();
+  });
+
+  // ================================================================ SHIP: idea to project
+  let ideaSize = "small";
+  $("sizeS").addEventListener("click", () => { ideaSize = "small"; $("sizeS").setAttribute("aria-pressed", true); $("sizeM").setAttribute("aria-pressed", false); });
+  $("sizeM").addEventListener("click", () => { ideaSize = "medium"; $("sizeM").setAttribute("aria-pressed", true); $("sizeS").setAttribute("aria-pressed", false); });
+
+  $("ideaGo").addEventListener("click", async () => {
+    const idea = $("ideaText").value.trim();
+    if (idea.length < 10) { setStatus("ideaMsg", "Describe the project in a sentence or two.", "bad"); return; }
+    if (!aiOn()) { render(); return; }
+    $("ideaGo").disabled = true; $("ideaStop").hidden = false;
+    const messages = AI.prompts.idea(idea, ideaSize);
+    const clean = t => t.trim().replace(/^```[a-z]*\n?/i, "").replace(/\n?```\s*$/, "");
+    let text = "", attempt = 0, lastErr = "";
+    try {
+      for (;;) {
+        let cut = false;
+        setStatus("ideaMsg", attempt ? `Fixing a problem (try ${attempt + 1} of 3)…` : "Writing your project… this takes about half a minute.", "info");
+        const out = await aiRun(signal => llm().chat(aiModel(), messages, {
+          signal, temperature: 0.3, ctx: 16384, maxTokens: ideaSize === "medium" ? 7000 : 4500,
+          onText: t => setStatus("ideaMsg", `${attempt ? "Fixing" : "Writing"}… ${t.length.toLocaleString()} characters so far`, "info"),
+          onWait: waitNote("ideaMsg"), onFinish: r => { cut = r === "length"; },
+        }));
+        text = clean(out);
+        if (cut) throw new Error("The project got cut off because it was too long. Try a smaller idea or the Small size.");
+        try {
+          const m = C.parse(text);
+          if (!m.commits.length || !C.finalFiles(m).size) throw new C.ManifestError("The project has no files.");
+          break;
+        } catch (pe) {
+          lastErr = pe.message;
+          if (attempt >= 2) throw new Error("The AI kept returning a broken format (" + lastErr + "). Try again, or rephrase the idea.");
+          messages.push({ role: "assistant", content: out },
+            { role: "user", content: `That output has a problem: ${lastErr}\nOutput the complete manifest again, fixed. Output only the manifest.` });
+          attempt++;
+        }
+      }
+      setText(text, true);
+      const st = C.stats(S.m);
+      setStatus("ideaMsg", `Done: ${plural(st.files, "file")} in ${plural(st.commits, "commit")}. Read the code in the Inspect panel before you push.`, "ok");
+    } catch (e) {
+      setStatus("ideaMsg", e.name === "AbortError" ? "Stopped." : e.message, "bad");
+    } finally { $("ideaStop").hidden = true; $("ideaGo").disabled = !aiOn(); }
+  });
+  $("ideaStop").addEventListener("click", () => aiAbort && aiAbort.abort());
+
   // ================================================================ SETTINGS: app
   function applyTheme(t) {
     store.set("theme", t);
@@ -860,7 +1005,7 @@
   $("resetAll").addEventListener("click", () => { $("resetBox").hidden = false; });
   $("resetNo").addEventListener("click", () => { $("resetBox").hidden = true; });
   $("resetYes").addEventListener("click", async () => {
-    await secrets.del("ghToken"); await secrets.del("tgToken");
+    await secrets.del("ghToken"); await secrets.del("tgToken"); await secrets.del("groqKey");
     store.clear();
     location.reload();
   });
@@ -903,9 +1048,13 @@
     applyTheme(store.get("theme", "system"));
     showTpl();
     $("aiUrl").value = S.ai.url;
+    S.groq.key = (await secrets.get("groqKey")) || "";
+    $("groqKey").value = S.groq.key;
+    setProvider(S.provider, true);
+    if (S.groq.key) checkGroq(true);
     $("aboutLine").textContent = `STEJECT v${BUILD.version}${native ? " · desktop app" : ""} · open source, MIT license`;
     if (BUILD.repo) { $("repoLink").href = `https://github.com/${BUILD.repo}`; $("repoLink").hidden = false; $("checkUpd").hidden = !native; }
-    $("storageNote").textContent = native ? "Tokens are encrypted by your operating system and stay on this computer." : "Tokens are stored in this browser only. They are sent to nothing but GitHub and Telegram.";
+    $("storageNote").textContent = native ? "Tokens and keys are encrypted by your operating system and stay on this computer." : "Tokens and keys are stored in this browser only. Each one is sent only to its own service (GitHub, Telegram, Groq).";
 
     const draft = store.get("draft", null);
     ta.value = draft && draft.trim() ? draft : SAMPLE;
@@ -921,7 +1070,7 @@
 
     const page = (location.hash || "#ship").slice(1);
     go(["ship", "learn", "history", "settings"].includes(page) ? page : "ship");
-    checkAi();
+    if (S.provider === "ollama") checkAi(); else { renderAiChip(); renderLearn(); }
     if (native) setTimeout(() => checkUpdate(false), 4000);
 
     // installable web app (not inside the desktop app or a sandboxed preview)

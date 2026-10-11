@@ -292,3 +292,5 @@ ol.how { margin: 0; padding-left: 20px; display: flex; flex-direction: column; g
 
 /* code must show exactly what will be committed: no ligatures (=== stays ===) */
 * { font-variant-ligatures: none !important; font-feature-settings: "liga" 0, "calt" 0 !important; }
+
+#ideaText { min-height: 84px; line-height: 1.5; font-weight: 400; }

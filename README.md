@@ -26,10 +26,11 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **Update mode:** paste changes for an existing repo. STEJECT shows what's new, changed or deleted compared with GitHub, then adds commits on top. It never overwrites history.
 - **Resume:** if your internet drops mid-push, continue from where it stopped.
 - **Telegram alerts:** get a message when a push succeeds or fails.
-- **Local AI (Ollama):** free and private, running on your computer:
-  - fixes broken manifests
-  - writes a README
-  - re-plans commits
+- **Start from an idea:** describe a project in a sentence and the AI writes it for you, ready to inspect and push.
+- **AI helper, your choice:**
+  - **Free cloud (Groq):** paste a free API key and it works in a minute. Your text goes to Groq.
+  - **Ollama:** free and private, running on your computer.
+  - Both can write projects from ideas, fix broken manifests, write a README and re-plan commits.
 - **Learn mode:** explains every file the way an interviewer would ask about it, quizzes you on your own code, and writes resume bullets.
 - **History:** every project you've shipped, with links.
 - **Ship kit:** no token? Download a script that builds the repo with Git on your computer.
@@ -60,7 +61,7 @@ Prefer the browser? The web version runs on this repo's GitHub Pages site and ca
 
 1. **GitHub:** Settings → paste a [classic token with the `repo` scope](https://github.com/settings/tokens/new?scopes=repo&description=STEJECT) → Connect.
 2. **Telegram (optional):** create a bot with @BotFather, paste its token, click *Find my chat ID*, then *Send test message*.
-3. **Local AI (optional):** install [Ollama](https://ollama.com/download), then click *Download* next to `qwen2.5-coder:3b` in Settings.
+3. **AI helper (optional):** either paste a free key from [console.groq.com/keys](https://console.groq.com/keys) in Settings → AI helper → *Free cloud (Groq)*, or install [Ollama](https://ollama.com/download) and click *Download* next to `qwen2.5-coder:3b`.
 
 Then copy the prompt from the Ship page into ChatGPT or Claude, paste the reply, and click Push.
 
@@ -82,7 +83,8 @@ Files and deletes belong to the next `COMMIT` line. Full prompts: [PROMPT_TEMPLA
 ## Privacy and safety
 
 - Tokens are encrypted with your operating system's keychain (desktop app) and stored only on your computer.
-- Network access is limited to `api.github.com`, `api.telegram.org` and your local Ollama. Anything else is blocked by the app's security policy.
+- Network access is limited to `api.github.com`, `api.telegram.org`, `api.groq.com` (only if you add a Groq key) and your local Ollama. Anything else is blocked by the app's security policy.
+- With Groq, the ideas and project text you use AI on are sent to Groq. Use Ollama for code that must stay private.
 - Pushing stops if a possible secret is found: GitHub, AWS, OpenAI-style, Google, Slack or Stripe keys, private keys, or hardcoded passwords.
 - STEJECT never force-pushes over existing history. Replacing GitHub's single "Initial commit" requires your confirmation.
 
@@ -115,6 +117,7 @@ test/           unit, UI and desktop tests
 - [ ] Sign installers so there's no first-run warning
 - [ ] Run the project's tests before pushing (desktop app)
 - [ ] More AI providers (LM Studio, OpenAI-compatible servers)
+- [ ] Ship an idea in one click (write, check and push without stopping at Inspect)
 
 ## License
 

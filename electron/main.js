@@ -88,11 +88,11 @@ function createWindow() {
   win.loadFile(path.join(APP_DIR, "index.html"));
 }
 
-// ---------------------------------------------------------------- network: let the page talk to Ollama and Telegram
+// ---------------------------------------------------------------- network: let the page talk to Ollama, Telegram and Groq
 // Browsers block reading replies from these hosts (CORS). The desktop app is
 // trusted, so it removes the Origin header on the way out and allows the reply.
 function allowLocalApis() {
-  const filter = { urls: ["http://localhost/*", "http://localhost:*/*", "http://127.0.0.1/*", "http://127.0.0.1:*/*", "https://api.telegram.org/*"] };
+  const filter = { urls: ["http://localhost/*", "http://localhost:*/*", "http://127.0.0.1/*", "http://127.0.0.1:*/*", "https://api.telegram.org/*", "https://api.groq.com/*"] };
   session.defaultSession.webRequest.onBeforeSendHeaders(filter, (d, cb) => {
     for (const k of Object.keys(d.requestHeaders)) if (k.toLowerCase() === "origin") delete d.requestHeaders[k];
     cb({ requestHeaders: d.requestHeaders });
@@ -102,6 +102,7 @@ function allowLocalApis() {
     for (const k of Object.keys(h)) if (k.toLowerCase().startsWith("access-control-")) delete h[k];
     h["Access-Control-Allow-Origin"] = ["*"];
     h["Access-Control-Allow-Headers"] = ["*"];
+    h["Access-Control-Expose-Headers"] = ["*"];
     h["Access-Control-Allow-Methods"] = ["GET, POST, DELETE, OPTIONS"];
     cb({ responseHeaders: h, statusLine: d.method === "OPTIONS" ? "HTTP/1.1 204 No Content" : d.statusLine });
   });

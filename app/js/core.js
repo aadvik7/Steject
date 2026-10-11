@@ -254,6 +254,16 @@
     return /^=== (PROJECT|FILE): .+ ===\s*$/m.test(text);
   }
 
+  // A plain-words hint for pasted text that is neither a manifest nor a chat reply
+  // with code blocks (usually code copied without its file names). null = no hint.
+  function pasteHint(text) {
+    const t = String(text || "");
+    if (!t.trim() || looksLikeManifest(t) || /```|~~~/.test(t)) return null;
+    const codey = /^\s*(import |from \S+ import |def |class |function |const |let |var |#include|public |package |using |<\/?[a-z][a-z0-9]*[ >])/m.test(t);
+    if (codey) return "This looks like code with no file names, so STEJECT can't tell which file it belongs to. In the chat, use the Copy button under the whole reply (not select-and-drag), or use the prompt above so the AI answers in the right format.";
+    return "This doesn't look like a project yet. Paste the AI's whole reply, or use the prompt above. No project yet? Use \"Start from an idea\".";
+  }
+
   // ------------------------------------------------------------------ diff (Myers)
   function diffLines(a, b) {
     const A = a === "" ? [] : a.replace(/\n$/, "").split("\n");
@@ -422,7 +432,7 @@ CHANGE I WANT:
 
   return {
     ManifestError, parse, serialize, finalFiles, stats, scanSecrets, safePath,
-    convertChatReply, looksLikeManifest, classify,
+    convertChatReply, looksLikeManifest, pasteHint, classify,
     diffLines, diffSummary, buildScript, fileMode, extractJson, digest,
     PROMPT_TEMPLATE, UPDATE_PROMPT, SECRETS,
   };

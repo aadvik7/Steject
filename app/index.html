@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com https://api.telegram.org http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com https://api.telegram.org https://api.groq.com http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>STEJECT</title>
 <meta name="description" content="Turn a project written by ChatGPT or Claude into a real GitHub repo with real commits.">
@@ -60,14 +60,32 @@
         <pre id="tplText"></pre>
         <div class="row" style="margin-top:10px"><button class="btn" id="copyTpl" type="button">Copy prompt</button></div>
       </details>
+      <details class="tpl" id="ideaBox">
+        <summary>Start from an idea (AI writes the project)</summary>
+        <div class="stack" style="margin-top:10px">
+          <label class="f" for="ideaText">What should it build?
+            <textarea id="ideaText" rows="3" maxlength="1200" spellcheck="true" placeholder="e.g. A Python command-line to-do app that saves tasks to a file, with unit tests"></textarea>
+          </label>
+          <div class="row">
+            <div class="seg" role="group" aria-label="Project size">
+              <button type="button" id="sizeS" aria-pressed="true">Small</button>
+              <button type="button" id="sizeM" aria-pressed="false">Medium</button>
+            </div>
+            <button class="btn ai" id="ideaGo" type="button">Write the project</button>
+            <button class="btn" id="ideaStop" type="button" hidden>Stop</button>
+          </div>
+          <p class="status" id="ideaMsg" role="status"></p>
+          <p class="note" id="ideaNoAi" hidden>This needs an AI helper. <a href="#settings" data-go="settings" data-focus="groqKey">Set up the free Groq AI</a> or install Ollama in Settings.</p>
+        </div>
+      </details>
       <textarea id="manifest" spellcheck="false" aria-label="Manifest or chat reply" placeholder="Paste the AI's reply here, or drop a .txt file"></textarea>
       <div class="callout info" id="convertBox" hidden>
         <span>This looks like a normal chat reply, not a manifest. STEJECT can turn it into one by finding each file name and its code block.</span>
         <div class="row"><button class="btn" id="convertBtn" type="button">Convert to manifest</button></div>
       </div>
       <div class="callout warn" id="fixBox" hidden>
-        <span id="fixText">The format is broken. Your local AI can try to repair it.</span>
-        <div class="row"><button class="btn ai" id="fixAiBtn" type="button">Fix with local AI</button><button class="btn" id="fixCancel" type="button" hidden>Stop</button></div>
+        <span id="fixText">The format is broken. Your AI helper can try to repair it.</span>
+        <div class="row"><button class="btn ai" id="fixAiBtn" type="button">Fix with AI</button><button class="btn" id="fixCancel" type="button" hidden>Stop</button></div>
         <div class="progress" id="fixProg" hidden><div></div></div>
       </div>
       <div class="row">
@@ -182,8 +200,8 @@
     </div>
   </div>
   <div class="callout warn" id="learnNoAi" hidden>
-    <span><strong>Local AI isn't set up yet.</strong> Install Ollama and pick a model in Settings. It's free and runs on your computer.</span>
-    <div class="row"><button class="btn" type="button" data-go="settings" data-focus="aiUrl">Set up local AI</button></div>
+    <span><strong>No AI helper is set up yet.</strong> Add a free Groq key (cloud) or install Ollama (runs on your computer) in Settings.</span>
+    <div class="row"><button class="btn" type="button" data-go="settings" data-focus="groqKey">Set up AI</button></div>
   </div>
   <div class="callout info" id="learnNoProj" hidden>
     <span>Paste a valid manifest on the Ship page first. Learn works on that project.</span>
@@ -227,7 +245,7 @@
   <div class="page-head">
     <div>
       <h1>Settings</h1>
-      <p id="storageNote">Tokens are stored on this computer only.</p>
+      <p id="storageNote">Tokens and keys are stored on this computer only.</p>
     </div>
   </div>
   <div class="settings">
@@ -270,8 +288,32 @@
     </section>
 
     <section class="panel" aria-labelledby="s-ai">
-      <h2 class="k" id="s-ai" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">Local AI (Ollama)</h2>
-      <p class="note">Free and private: the model runs on your computer. Used to fix broken manifests, write READMEs, and power the Learn page.</p>
+      <h2 class="k" id="s-ai" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">AI helper</h2>
+      <p class="note">Writes a project from your idea, repairs broken replies, writes READMEs, and powers the Learn page. Pick one.</p>
+      <div class="seg" role="group" aria-label="AI provider">
+        <button type="button" id="provGroq" aria-pressed="false">Free cloud (Groq)</button>
+        <button type="button" id="provOllama" aria-pressed="true">On my computer (Ollama)</button>
+      </div>
+
+      <div class="stack" id="groqBox" hidden>
+        <ol class="how">
+          <li>Make a free account at <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a> and open <a href="https://console.groq.com/keys" target="_blank" rel="noopener">API Keys</a>.</li>
+          <li>Click <strong>Create API Key</strong> and copy it.</li>
+          <li>Paste it below and click <strong>Save and test</strong>.</li>
+        </ol>
+        <div class="callout info"><span><strong>Privacy:</strong> with Groq, the ideas and project text you use AI on are sent to Groq's servers. Don't use it on code that must stay private. Your key stays on this computer. The free plan has daily limits; if you hit them, wait or pick another model.</span></div>
+        <label class="f" for="groqKey">Groq API key<input id="groqKey" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_..."></label>
+        <div class="row">
+          <button class="btn primary" id="groqSave" type="button">Save and test</button>
+          <button class="btn" id="groqRemove" type="button" hidden>Remove key</button>
+          <span class="status" id="groqMsg" role="status"></span>
+        </div>
+        <h3 class="k">Model</h3>
+        <div class="models" id="groqModels"></div>
+      </div>
+
+      <div class="stack" id="ollamaBox">
+        <p class="note">Free and private: the model runs on your computer.</p>
       <div class="callout warn" id="aiSetup" hidden>
         <span><strong>Ollama isn't running.</strong> Install it from <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>, open it, then click Check again.</span>
         <span id="aiBrowserHint" hidden>Using STEJECT in a browser? Ollama must allow this page. Quit Ollama, set the environment variable <code>OLLAMA_ORIGINS=*</code>, and start it again. The desktop app doesn't need this.</span>
@@ -285,6 +327,7 @@
       <div class="stack" id="pullBox" hidden>
         <div class="row" style="justify-content:space-between"><span class="note" id="pullText"></span><button class="btn small" id="pullStop" type="button">Stop</button></div>
         <div class="progress"><div id="pullBar"></div></div>
+      </div>
       </div>
     </section>
 

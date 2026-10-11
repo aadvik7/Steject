@@ -145,3 +145,12 @@ test("digest stays within budget", () => {
   assert.ok(d.length < 5100);
   assert.ok(d.includes("- b.py"));
 });
+
+test("pasteHint explains code pasted without file names", () => {
+  const C = require("../app/js/core.js");
+  assert.match(C.pasteHint("import unittest\n\nfrom calculator import add\n"), /no file names/);
+  assert.match(C.pasteHint("hello there, build me an app"), /Start from an idea/);
+  assert.equal(C.pasteHint("```py\nx = 1\n```"), null);                       // chat reply: the converter handles it
+  assert.equal(C.pasteHint("=== FILE: a.py ===\nx = 1\n"), null);              // already a manifest
+  assert.equal(C.pasteHint("   "), null);
+});
