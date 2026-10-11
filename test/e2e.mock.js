@@ -146,7 +146,7 @@ async function groqMock(route) {
 
 // ------------------------------------------------------------------ Pyodide mock (the real one is checked by hand; see docs)
 // The fake loadPyodide asks the test what each run should return, so the self-check loop can be scripted.
-let pyPlan = [], pyRuns = 0;
+let pyPlan = [], pyRuns = 0, pyCdnDown = false;
 const FAKE_PYODIDE = `self.loadPyodide = async () => {
   let out = () => {};
   return {
@@ -165,6 +165,7 @@ async function pyodideMock(route) {
   const u = new URL(route.request().url());
   const cors = { "access-control-allow-origin": "*" };
   if (u.pathname.endsWith("/__mock__/next")) { pyRuns++; return route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify(pyPlan.length ? pyPlan.shift() : { status: "pass" }) }); }
+  if (pyCdnDown) return route.abort("internetdisconnected");
   if (u.pathname.endsWith("/pyodide.js")) return route.fulfill({ status: 200, headers: { ...cors, "content-type": "text/javascript" }, body: FAKE_PYODIDE });
   return route.fulfill({ status: 404, headers: cors, body: "" });
 }
@@ -542,6 +543,19 @@ async function customMock(route) {
   ok(/1 request · 42 tokens of 2 a day/.test(await page.textContent("#usageLine")), "usage: requests and tokens today, against a daily limit");
   await page.click("#customRemove");
   await page.click("#provOllama"); await page.waitForTimeout(400);
+
+  // ---- 9p. network policy and an unreachable Python CDN
+  const direct = await page.evaluate(async () => { try { await fetch("https://example.com/"); return "reached"; } catch { return "blocked"; } });
+  ok(direct === "blocked", "security policy: the page can't call unknown https hosts directly");
+  ok(await page.evaluate(() => SteNet.direct("https://api.groq.com/x") && !SteNet.direct("https://ai.example.test/v1")), "network: built-in hosts direct, user-chosen hosts through the worker");
+  await page.evaluate(() => SteRun.stop());
+  pyCdnDown = true;
+  await page.click('nav [data-go="ship"]');
+  await page.fill("#manifest", "=== FILE: main.py ===\nprint(1)\n=== COMMIT: x ===");
+  await page.waitForTimeout(300); await page.click("#runCheck");
+  await page.waitForFunction(() => /cdn\.jsdelivr\.net/.test(document.querySelector("#runMsg").textContent), null, { timeout: 10000 });
+  ok((await page.textContent("#runMsg")).includes("Nothing was checked") && !(await page.textContent("#checks")).includes("Yes"), "Python CDN unreachable: clear message, not a pass");
+  pyCdnDown = false;
 
   // ---- 10. secret blocks push
   await page.click('nav [data-go="ship"]');

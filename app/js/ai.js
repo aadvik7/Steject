@@ -114,7 +114,7 @@
 
   /**
    * Client for an OpenAI-compatible API.
-   * opts: {base, key, name, keyHelp, groq, onRequest(), onUsage({prompt, completion, total})}
+   * opts: {base, key, name, keyHelp, groq, fetch, onRequest(), onUsage({prompt, completion, total})}
    */
   function compat(opts) {
     const BASE = String(opts.base || GROQ_BASE).replace(/\/+$/, "");
@@ -158,7 +158,7 @@
     async function call(path, init, signal, onWait) {
       for (let attempt = 0; ; attempt++) {
         let res;
-        try { res = await fetch(BASE + path, { ...init, signal }); }
+        try { res = await (opts.fetch || fetch)(BASE + path, { ...init, signal }); }
         catch (e) {
           if (e.name === "AbortError") throw e;
           throw new Error(opts.groq

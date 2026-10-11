@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com https://api.telegram.org https://api.groq.com https://openrouter.ai https://generativelanguage.googleapis.com https://registry.npmjs.org https://pypi.org http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>STEJECT</title>
 <meta name="description" content="Turn a project written by ChatGPT or Claude into a real GitHub repo with real commits.">
@@ -459,6 +459,7 @@
 <script src="js/core.js"></script>
 <script src="js/github.js"></script>
 <script src="js/ai.js"></script>
+<script src="js/net.js"></script>
 <script src="js/runner.js"></script>
 <script src="starters/starters.js"></script>
 <script src="js/app.js"></script>

@@ -105,7 +105,7 @@
   function llm() {
     const hooks = { onRequest: () => countUsage(S.provider, 0), onUsage: u => countUsage(S.provider, u.total, true) };
     if (S.provider === "groq") return AI.groq(S.groq.key, hooks);
-    if (S.provider === "custom") return AI.compat({ base: S.custom.url, key: S.custom.key, name: hostOf(S.custom.url), keyHelp: "Check the key in Settings.", ...hooks });
+    if (S.provider === "custom") return AI.compat({ base: S.custom.url, key: S.custom.key, name: hostOf(S.custom.url), keyHelp: "Check the key in Settings.", fetch: SteNet.fetch, ...hooks });
     const c = AI.ollama(S.ai.url), chat = c.chat;
     c.chat = (...a) => { countUsage("ollama", 0); return chat(...a); };
     return c;
@@ -1492,7 +1492,7 @@
     if (!S.custom.url) return null;
     if (native && native.allowHost) { try { await native.allowHost(S.custom.url); } catch {} }
     if (!quiet) setStatus("customMsg", "Checking…", "info");
-    const st = await AI.compat({ base: S.custom.url, key: S.custom.key, name: hostOf(S.custom.url) }).status();
+    const st = await AI.compat({ base: S.custom.url, key: S.custom.key, name: hostOf(S.custom.url), fetch: SteNet.fetch }).status();
     S.custom.ok = st.ok; S.custom.models = st.models || [];
     if (st.ok) {
       $("customModels").innerHTML = S.custom.models.slice(0, 500).map(id => `<option value="${esc(id)}"></option>`).join("");

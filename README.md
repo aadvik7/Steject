@@ -89,7 +89,9 @@ Files and deletes belong to the next `COMMIT` line. Full prompts: [PROMPT_TEMPLA
 ## Privacy and safety
 
 - Tokens are encrypted with your operating system's keychain (desktop app) and stored only on your computer.
-- STEJECT talks to GitHub, Telegram, the AI service you choose (Groq, or an https address you add yourself) and your local Ollama or LM Studio. The app's security policy allows https and this computer only; plain http to other computers is blocked.
+- The app's security policy lets the page call only: GitHub (`api.github.com`, `raw.githubusercontent.com`), Telegram, Groq, OpenRouter, Google Gemini, the npm and PyPI registries (Repo doctor), and this computer (Ollama, LM Studio). Everything else is blocked.
+- If you add your own AI address in Settings (for example a college server), requests to that one https address go through a small background worker (`js/networker.js`) that refuses anything but https, or http on this computer.
+- Downloads that happen only when you use a feature: Python for *Check it runs* (Pyodide, from `cdn.jsdelivr.net`) and the in-browser AI model (from Hugging Face). Your code is never uploaded for these.
 - With a cloud AI, the ideas and project text you use AI on are sent to that service. Use Ollama for code that must stay private.
 - *Check it runs* never runs AI-written code with access to your tokens. Python runs in a separate Web Worker using [Pyodide](https://pyodide.org) (downloaded once from jsDelivr, about 10 MB). Web projects open in a sandboxed frame that has no network access at all.
 - Pushing stops if a possible secret is found: GitHub, AWS, OpenAI-style, Groq, Google, Hugging Face, npm, Slack or Stripe keys, private keys, or hardcoded passwords.

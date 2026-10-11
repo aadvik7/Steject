@@ -39,9 +39,11 @@ const fakeOllama = http.createServer((req, res) => {
   ok((await win.textContent("#chipAi")).includes("llama3.2"), "desktop app reaches Ollama without OLLAMA_ORIGINS (CORS shim works)");
   const fonts = await win.evaluate(async () => { await document.fonts.ready; return ["Big Shoulders Display", "Public Sans", "JetBrains Mono"].map(f => document.fonts.check(`16px "${f}"`)); });
   ok(fonts.every(Boolean), "bundled fonts load offline");
-  // https is open for AI services the user adds; plain http to other computers stays blocked
-  const blocked = await win.evaluate(async () => { try { await fetch("http://example.com"); return false; } catch { return true; } });
-  ok(blocked, "content security policy blocks plain-http hosts");
+  // the page may only call its fixed host list; user-chosen AI addresses go through js/networker.js
+  const blocked = await win.evaluate(async () => { try { await fetch("https://example.com"); return false; } catch { return true; } });
+  ok(blocked, "content security policy blocks hosts that aren't on the list");
+  const viaWorker = await win.evaluate(async () => { try { const r = await SteNet.viaWorker("http://127.0.0.1:11434/api/version"); return (await r.json()).version; } catch (e) { return "error " + e.message; } });
+  ok(viaWorker === "0.12.0", "network worker reaches a user-chosen address (" + viaWorker + ")");
   const worker = await win.evaluate(() => new Promise(res => {
     try { const w = new Worker("js/pyworker.js"); w.onmessage = e => res(e.data && e.data.status); w.onerror = e => res("error " + (e.message || "")); w.postMessage({ id: 1, op: "ping" }); setTimeout(() => res("timeout"), 5000); }
     catch (e) { res("throw " + e.message); }

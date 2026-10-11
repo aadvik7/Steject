@@ -54,8 +54,15 @@ result
 async function boot() {
   if (py) return py;
   postMessage({ type: "progress", text: "Loading Python in the browser (first time about 10 MB)…" });
-  importScripts(PYODIDE + "pyodide.js");
-  py = await self.loadPyodide({ indexURL: PYODIDE });
+  try {
+    importScripts(PYODIDE + "pyodide.js");
+    py = await self.loadPyodide({ indexURL: PYODIDE });
+  } catch (err) {
+    py = null;
+    const e = new Error("Couldn't download Python for the browser from cdn.jsdelivr.net. Check your internet connection; a school or office network may be blocking it. Nothing was checked.");
+    e.cdn = true;
+    throw e;
+  }
   py.setStdout({ batched: s => out.push(s) });
   py.setStderr({ batched: s => out.push(s) });
   py.setStdin({ stdin: () => null });       // input() gets end-of-file instead of hanging
@@ -95,6 +102,6 @@ self.onmessage = async e => {
     const r = JSON.parse(await p.runPythonAsync(RUNNER));
     postMessage({ id, type: "result", ...r, output: out.join("\n").slice(-20000) });
   } catch (err) {
-    postMessage({ id, type: "result", status: "error", detail: "Python couldn't start.", output: (out.join("\n") + "\n" + String(err && err.message || err)).trim().slice(-4000) });
+    postMessage({ id, type: "result", status: "error", detail: err && err.cdn ? err.message : "Python couldn't start.", output: err && err.cdn ? "" : (out.join("\n") + "\n" + String(err && err.message || err)).trim().slice(-4000) });
   }
 };
