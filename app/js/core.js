@@ -117,12 +117,19 @@
     return { files, lines, deletes, commits: m.commits.length };
   }
 
+  // "password = 'your-password-here'" is an example, not a leak (only for the generic rule; real token formats always count)
+  const PLACEHOLDER = /^(your|my|example|sample|change[-_]?me|replace|placeholder|dummy|fake|test|xxx|\*{3}|<|\$\{|\{\{|todo|insert|put[-_])/i;
+  function isPlaceholderSecret(name, line) {
+    if (name !== "Hardcoded secret") return false;
+    const m = String(line).match(/[=:]\s*['"]([^'"\s]{12,})['"]/);
+    return !!m && (PLACEHOLDER.test(m[1]) || /here|example|your[-_]/i.test(m[1]));
+  }
   function scanSecrets(m) {
     const hits = [];
     m.commits.forEach(c => c.files.forEach((content, path) => {
       if (!content) return;
       content.split("\n").forEach((line, i) => {
-        for (const [name, re] of SECRETS) if (re.test(line)) { hits.push({ path, line: i + 1, name }); break; }
+        for (const [name, re] of SECRETS) if (re.test(line) && !isPlaceholderSecret(name, line)) { hits.push({ path, line: i + 1, name }); break; }
       });
     }));
     return hits;
@@ -678,7 +685,7 @@ CHANGE I WANT:
 <describe the change here>`;
 
   return {
-    ManifestError, parse, serialize, finalFiles, stats, scanSecrets, safePath,
+    ManifestError, parse, serialize, finalFiles, stats, scanSecrets, isPlaceholderSecret, safePath,
     convertChatReply, looksLikeManifest, pasteHint, classify,
     skipReason, IMPORT_LIMITS, groupCommits, manifestFromFiles, normalizePlan, fitToPlan, applyChanges, changedPaths, detectStack, polish, fingerprint, withUnderstanding, slug,
     diffLines, diffSummary, buildScript, fileMode, extractJson, digest,

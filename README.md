@@ -97,7 +97,8 @@ Files and deletes belong to the next `COMMIT` line. Full prompts: [PROMPT_TEMPLA
 - Downloads that happen only when you use a feature: Python for *Check it runs* (Pyodide, from `cdn.jsdelivr.net`) and the in-browser AI model (from Hugging Face). Your code is never uploaded for these.
 - With a cloud AI, the ideas and project text you use AI on are sent to that service. Use Ollama for code that must stay private.
 - *Check it runs* never runs AI-written code with access to your tokens. Python runs in a separate Web Worker using [Pyodide](https://pyodide.org) (downloaded once from jsDelivr, about 10 MB). Web projects open in a sandboxed frame that has no network access at all.
-- Pushing stops if a possible secret is found: GitHub, AWS, OpenAI-style, Groq, Google, Hugging Face, npm, Slack or Stripe keys, private keys, or hardcoded passwords.
+- **Safety checks before every push.** Secrets always block the push, with no override: GitHub, AWS, OpenAI-style, Groq, Google, Hugging Face, npm, Slack or Stripe keys, private keys, or hardcoded passwords, in the files *and* in commit messages.
+- Warnings you must confirm before pushing: dependency names one or two letters off a popular package (a common malware trick), deprecated or hijacked packages, Python standard-library names in `requirements.txt`, install scripts that run on `npm install`, unpinned or URL dependencies, and GPL-licensed files in an MIT/Apache/BSD project.
 - STEJECT never force-pushes over existing history. Replacing GitHub's single "Initial commit" requires your confirmation.
 
 ## Development

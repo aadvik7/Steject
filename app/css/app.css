@@ -177,6 +177,9 @@ details.tpl pre { margin: 10px 0 0; max-height: 240px; overflow: auto; font: 12p
 .chk.bad { border-left-color: var(--bad); } .chk.bad .v { color: var(--bad); }
 .chk.info { border-left-color: var(--info); grid-column: span 2; } .chk.info .v { color: var(--info); }
 .errors { display: flex; flex-direction: column; gap: 6px; }
+.chk.warn { border-left-color: var(--warn); } .chk.warn .v { color: var(--warn); }
+.warnf { background: var(--warn-soft); color: var(--warn); border-radius: 4px; padding: 9px 12px; font-size: 13px; overflow-wrap: anywhere; }
+.warnf b, .err b { font-family: var(--mono); font-weight: 600; }
 .err { background: var(--bad-soft); color: var(--bad); border-radius: 4px; padding: 9px 12px; font-size: 13px; font-family: var(--mono); overflow-wrap: anywhere; }
 
 .split { display: grid; gap: 14px; grid-template-columns: 1fr; }

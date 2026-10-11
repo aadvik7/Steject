@@ -6,7 +6,8 @@
 2. Paste it into ChatGPT or Claude, replace the last line with your project idea, and send it.
 3. Copy the whole reply and paste it into STEJECT. You can also save it as a `.txt` file and drag it in, or press **Ctrl+O**.
 4. Check the **Inspect** panel:
-   - **Format, Paths, Secret scan** should all be green.
+   - **Format, Paths, Safety** should all be green.
+   - **Safety** checks every file and commit message before a push. **Blocked** (red) means a possible secret, like an API key. Remove it: secrets are never pushed. **Warnings** (yellow) explain a risk in plain words, like a package name that looks like a typo of a popular one, or GPL code in an MIT project. Read them, fix what you can, and tick *I checked the safety warnings* to push anyway.
    - Click any file in the commit plan to read it.
 5. Under **Push**, keep *New repo*, check the repo name, and choose Public or Private.
 6. Click **Push** (or press **Ctrl+Enter**). The log shows every step and ends with a link to your repo.

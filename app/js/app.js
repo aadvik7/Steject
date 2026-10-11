@@ -74,7 +74,7 @@
   ].join("\n");
 
   const S = {
-    m: null, hits: [], error: null, isChat: false,
+    m: null, hits: [], findings: [], error: null, isChat: false,
     selected: null, view: "file",
     mode: store.get("mode", "new"),
     gh: { token: null, login: null },
@@ -162,13 +162,13 @@
     $("sampleTag").hidden = text !== SAMPLE;
     $("replaceBox").hidden = true;
     S.isChat = false;
-    if (!text.trim()) { Object.assign(S, { m: null, hits: [], error: null }); }
+    if (!text.trim()) { Object.assign(S, { m: null, hits: [], findings: [], error: null }); }
     else {
       try {
         const m = C.parse(text);
-        Object.assign(S, { m, hits: C.scanSecrets(m), error: null });
+        Object.assign(S, { m, hits: C.scanSecrets(m), findings: SteSafety.scan(m), error: null });
       } catch (e) {
-        Object.assign(S, { m: null, hits: [], error: e instanceof C.ManifestError ? e.message : "Could not read this: " + e.message });
+        Object.assign(S, { m: null, hits: [], findings: [], error: e instanceof C.ManifestError ? e.message : "Could not read this: " + e.message });
         S.isChat = !C.looksLikeManifest(text) && /```/.test(text);
       }
     }
@@ -243,9 +243,9 @@
       : chk("Runs", "Not checked");
     checks.innerHTML =
       chk("Format", "Valid", "ok") + chk("Paths", "Safe", "ok") +
-      (hits.length ? chk("Secret scan", `${hits.length} flagged`, "bad") : chk("Secret scan", "Clean", "ok")) +
+      (blocks().length ? chk("Safety", `${blocks().length} blocking`, "bad") : warns().length ? chk("Safety", `${plural(warns().length, "warning")}`, "warn") : chk("Safety", "Clean", "ok")) +
       chk("Commits", st.commits) + chk("Files · lines", `${st.files} · ${st.lines}`) + runChk + cmp;
-    if (hits.length) errs.innerHTML = hits.map(h => `<div class="err">Possible ${esc(h.name)} in ${esc(h.path)}, line ${h.line}</div>`).join("");
+    if (S.findings.length) errs.innerHTML = S.findings.map(f => `<div class="${f.level === "block" ? "err" : "warnf"}">${f.level === "block" ? "Blocked · " : "Warning · "}<b>${esc(f.path)}${f.line ? ":" + f.line : ""}</b> ${esc(f.message)}</div>`).join("");
     $("projName").innerHTML = `<span class="tag">${esc(m.project)}/</span>`;
     const flagged = new Set(hits.map(h => h.path));
     const badge = s => s ? `<span class="badge ${s}">${{ new: "new", chg: "changed", same: "same", del: "delete" }[s]}</span>` : "";
@@ -494,7 +494,10 @@
   });
 
   // ================================================================ SHIP: push
-  const canShip = () => !!S.m && (!S.hits.length || $("override").checked) && !S.busy && gateOk();
+  const blocks = () => S.findings.filter(f => f.level === "block");
+  const warns = () => S.findings.filter(f => f.level === "warn");
+  // secrets can never be pushed; warnings need the student to confirm they checked them
+  const canShip = () => !!S.m && !blocks().length && (!warns().length || $("override").checked) && !S.busy && gateOk();
 
   function setMode(mode) {
     S.mode = mode; store.set("mode", mode);
@@ -518,8 +521,8 @@
 
   let lastProject = null;
   function updateShip() {
-    $("overrideRow").hidden = !(S.m && S.hits.length);
-    if (!S.hits.length) $("override").checked = false;
+    $("overrideRow").hidden = !(S.m && warns().length && !blocks().length);
+    if (!warns().length) $("override").checked = false;
     if (S.m && S.m.project !== lastProject) {
       if (!$("repoName").dataset.touched) $("repoName").value = S.m.project;
       lastProject = S.m.project;
@@ -544,7 +547,8 @@
     $("copyScript").disabled = !ok;
 
     if (!S.m) setStatus("shipMsg", ta.value.trim() ? "" : "Paste a manifest to start.");
-    else if (S.hits.length && !$("override").checked) setStatus("shipMsg", "Blocked: possible secrets found. Remove them, or confirm they are safe.", "bad");
+    else if (blocks().length) setStatus("shipMsg", "Blocked: possible secrets found (see Inspect). Remove them before pushing. Secrets are never pushed, even with a confirmation.", "bad");
+    else if (warns().length && !$("override").checked) setStatus("shipMsg", `Check the ${plural(warns().length, "safety warning")} in Inspect, then tick the box above to push.`, "bad");
     else if (!gateOk()) setStatus("shipMsg", "Blocked by the understanding gate: pass the quiz or mock interview for this version on Learn.", "bad");
     else if (!connected && S.mode !== "kit") setStatus("shipMsg", "Connect GitHub in Settings to push.", "");
     else if (!$("shipMsg").dataset.keep) setStatus("shipMsg", "");
