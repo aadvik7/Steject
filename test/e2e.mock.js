@@ -24,7 +24,7 @@ const ok = (c, m) => { if (c) console.log("ok -", m); else { failures++; console
 const TOKEN = "ghp_" + "t".repeat(36);
 const sha = () => crypto.randomBytes(20).toString("hex");
 const repos = {};
-let failNextCommitPost = 0, lastPatch = null;
+let failNextCommitPost = 0, passBeforeFail = 0, lastPatch = null;
 function mkRepo(full, files, n) {
   const [owner, name] = full.split("/");
   const r = { owner, name, commits: {}, trees: {}, blobs: {}, ref: null, branch: "main" };
@@ -77,7 +77,10 @@ async function gh(route) {
     const t = sha(); r.trees[t] = t0; return send(201, { sha: t });
   }
   if (rest === "/git/commits") {
-    if (failNextCommitPost > 0) { failNextCommitPost--; return send(502, { message: "Bad gateway" }); }
+    if (failNextCommitPost > 0) {
+      if (passBeforeFail > 0) passBeforeFail--;
+      else { failNextCommitPost--; return send(502, { message: "Bad gateway" }); }
+    }
     const c = sha(); r.commits[c] = { tree: body.tree, parents: body.parents, message: body.message }; return send(201, { sha: c });
   }
   if (rest === "/git/refs/heads/main" && m === "PATCH") {
@@ -184,13 +187,10 @@ async function ollama(route) {
   await page.click("#modeNew");
   await page.fill("#manifest", "=== PROJECT: resume-me ===\n=== FILE: a.txt ===\na\n=== COMMIT: one ===\n=== FILE: b.txt ===\nb\n=== COMMIT: two ===\n=== FILE: c.txt ===\nc\n=== COMMIT: three ===");
   await page.waitForTimeout(300);
-  failNextCommitPost = 0;
-  // fail the 2nd commit: let the first through, then fail 6 times (exhausts retries)
-  await page.evaluate(() => {});
-  const origPush = page.click("#pushBtn");
-  await page.waitForFunction(() => /Commit 1\/3: one\s+[0-9a-f]{7}/.test(document.querySelector("#log").textContent), null, { timeout: 8000 }).catch(() => {});
-  failNextCommitPost = 6;
-  await origPush;
+  // fail the 2nd commit: let the first through, then fail 6 times (exhausts retries).
+  // Armed before clicking so it doesn't race the push.
+  passBeforeFail = 1; failNextCommitPost = 6;
+  await page.click("#pushBtn");
   await page.waitForSelector("#resumeBtn:not([hidden])", { timeout: 20000 });
   ok((await page.textContent("#log")).includes("Resume push"), "failure: log explains how to resume");
   failNextCommitPost = 0;
