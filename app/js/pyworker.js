@@ -63,8 +63,11 @@ async function boot() {
     e.cdn = true;
     throw e;
   }
-  py.setStdout({ batched: s => out.push(s) });
-  py.setStderr({ batched: s => out.push(s) });
+  // raw writes keep output exactly as printed (pytest's progress dots stay on one line)
+  const dec = new TextDecoder();
+  const write = buf => { out.push(dec.decode(buf, { stream: true })); return buf.length; };
+  py.setStdout({ write });
+  py.setStderr({ write });
   py.setStdin({ stdin: () => null });       // input() gets end-of-file instead of hanging
   return py;
 }
@@ -100,8 +103,8 @@ self.onmessage = async e => {
     p.globals.set("STE_DIR", dir); p.globals.set("STE_OP", op); p.globals.set("STE_ENTRY", entry || "");
     postMessage({ id, type: "started" });
     const r = JSON.parse(await p.runPythonAsync(RUNNER));
-    postMessage({ id, type: "result", ...r, output: out.join("\n").slice(-20000) });
+    postMessage({ id, type: "result", ...r, output: out.join("").slice(-20000) });
   } catch (err) {
-    postMessage({ id, type: "result", status: "error", detail: err && err.cdn ? err.message : "Python couldn't start.", output: err && err.cdn ? "" : (out.join("\n") + "\n" + String(err && err.message || err)).trim().slice(-4000) });
+    postMessage({ id, type: "result", status: "error", detail: err && err.cdn ? err.message : "Python couldn't start.", output: err && err.cdn ? "" : (out.join("") + "\n" + String(err && err.message || err)).trim().slice(-4000) });
   }
 };

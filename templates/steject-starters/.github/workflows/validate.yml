@@ -1,0 +1,51 @@
+# Checks every starter with the real STEJECT parser, and keeps index.json up to date on main.
+name: Validate starters
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Get the STEJECT parser and validator
+        run: |
+          curl -sfO https://raw.githubusercontent.com/aadvik7/Steject/main/app/js/core.js
+          curl -sfO https://raw.githubusercontent.com/aadvik7/Steject/main/scripts/validate-starters.js
+      - name: Validate
+        run: node validate-starters.js . --core core.js --index
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Run each Python starter's tests
+        run: |
+          pip install -q pytest
+          node -e '
+            const C = require("./core.js"), fs = require("fs"), path = require("path"), cp = require("child_process");
+            for (const id of fs.readdirSync("starters")) {
+              const m = C.parse(fs.readFileSync(path.join("starters", id, "project.txt"), "utf8"));
+              const files = C.finalFiles(m);
+              if (![...files.keys()].some(p => p.endsWith(".py"))) continue;
+              const dir = fs.mkdtempSync("/tmp/starter-");
+              for (const [p, t] of files) { fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true }); fs.writeFileSync(path.join(dir, p), t); }
+              console.log("::group::" + id);
+              cp.execFileSync("python", ["-m", "pytest", "-q"], { cwd: dir, stdio: "inherit" });
+              console.log("::endgroup::");
+            }'
+      - name: Commit index.json
+        if: github.event_name == 'push'
+        run: |
+          rm -f core.js validate-starters.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.json
+          git diff --cached --quiet || (git commit -m "Update index.json" && git push)

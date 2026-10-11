@@ -1,0 +1,35 @@
+name: Feature idea
+description: Suggest something that would help students ship or understand projects
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        STEJECT stays free, serverless and private by default. Ideas that need a server, an account or tracking can't be accepted, but ideas that work around that are welcome!
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What's hard or annoying today? Who runs into it?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How could STEJECT help? Rough sketches are fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Other ways you considered
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Checklist
+      options:
+        - label: It works without a server or an account.
+          required: true
+        - label: I searched the existing issues and the ROADMAP.md first.
+          required: true

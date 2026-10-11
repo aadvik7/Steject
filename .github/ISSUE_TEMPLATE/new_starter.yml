@@ -1,0 +1,49 @@
+name: New starter idea
+description: Suggest a project idea for the starter gallery
+labels: [starter]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Starters fill the "Start from an idea" box in one click. They must run offline: no API keys, accounts or paid services.
+        Want to add it yourself? Edit `app/starters/starters.js` (see CONTRIBUTING.md), or add a full starter to the steject-starters repo (docs/STARTERS-REPO.md).
+  - type: input
+    id: title
+    attributes:
+      label: Title
+      description: Under 40 characters, e.g. "Expense tracker with reports"
+    validations:
+      required: true
+  - type: dropdown
+    id: level
+    attributes:
+      label: Level
+      options: [beginner, intermediate, advanced]
+    validations:
+      required: true
+  - type: input
+    id: lang
+    attributes:
+      label: Language
+      placeholder: Python, HTML/CSS/JS, Java…
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options: ["small (3 to 6 files)", "medium (5 to 9 files)"]
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea, as the AI should read it
+      description: Under 400 characters. Name the language, what it does, and ask for tests.
+    validations:
+      required: true
+  - type: textarea
+    id: learn
+    attributes:
+      label: What a student learns from it
+      placeholder: "- reading and writing JSON files\n- argparse\n- writing pytest tests"

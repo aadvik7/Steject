@@ -146,12 +146,12 @@ async function groqMock(route) {
 
 // ------------------------------------------------------------------ Pyodide mock (the real one is checked by hand; see docs)
 // The fake loadPyodide asks the test what each run should return, so the self-check loop can be scripted.
-let pyPlan = [], pyRuns = 0, pyCdnDown = false;
+let pyPlan = [], pyRuns = 0, pyCdnDown = false, communityUp = false;
 const FAKE_PYODIDE = `self.loadPyodide = async () => {
   let out = () => {};
   return {
     FS: { mkdirTree() {}, writeFile() {} },
-    setStdout(o) { out = o.batched; }, setStderr() {}, setStdin() {},
+    setStdout(o) { out = o.batched || (s => o.write(new TextEncoder().encode(s + "\\n"))); }, setStderr() {}, setStdin() {},
     loadPackage: async () => {}, pyimport: () => ({ install: async () => {} }),
     globals: { set() {} },
     runPythonAsync: async () => {
@@ -197,6 +197,13 @@ async function customMock(route) {
   await ctx.route("https://api.groq.com/**", groqMock);
   await ctx.route("https://cdn.jsdelivr.net/pyodide/**", pyodideMock);
   await ctx.route("https://ai.example.test/**", customMock);
+  await ctx.route("https://raw.githubusercontent.com/aadvik7/steject-starters/**", route => {
+    const u = new URL(route.request().url()), cors = { "access-control-allow-origin": "*" };
+    if (!communityUp) return route.fulfill({ status: 404, headers: cors, body: "404: Not Found" });
+    if (u.pathname.endsWith("/index.json")) { const r = require("../scripts/validate-starters.js").validate(path.join(__dirname, "..", "templates", "steject-starters")); return route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify({ version: 1, starters: r.starters }) }); }
+    const f = path.join(__dirname, "..", "templates", "steject-starters", u.pathname.replace(/^\/aadvik7\/steject-starters\/main\//, ""));
+    return fs.existsSync(f) ? route.fulfill({ status: 200, headers: cors, body: fs.readFileSync(f, "utf8") }) : route.fulfill({ status: 404, headers: cors, body: "" });
+  });
   await ctx.route("https://api.telegram.org/**", route => {
     const r = route.request(); const cors = { "access-control-allow-origin": "*", "content-type": "application/json" };
     if (r.url().endsWith("/getUpdates")) return route.fulfill({ status: 200, headers: cors, body: JSON.stringify({ ok: true, result: [{ message: { chat: { id: 4242, first_name: "Aadvik" } } }] }) });
@@ -353,6 +360,17 @@ async function customMock(route) {
   await page.click('[data-starter="todo-cli"]');
   ok((await page.inputValue("#ideaText")).includes("to-do app"), "starter fills the idea box in one click");
   ok(!(await page.isDisabled("#ideaGo")), "idea box enabled once an AI helper is ready");
+  // community starters (aadvik7/steject-starters): offline repo → plain message; online → merged, with a finished example
+  communityUp = false;
+  await page.click("#starterMore"); await page.waitForTimeout(300);
+  ok((await page.textContent("#starterMsg")).includes("isn't online yet"), "community starters: missing repo explained");
+  communityUp = true;
+  await page.click("#starterMore"); await page.waitForSelector('[data-starter="c-todo-cli"]', { timeout: 5000 });
+  await page.click('[data-starter="c-todo-cli"]');
+  ok(await page.isVisible("#starterExample") && (await page.textContent("#ideaMsg")).includes("You'll learn"), "community starter: idea, what you'll learn, and a finished example");
+  await page.click("#starterExample"); await page.waitForTimeout(300);
+  ok((await page.textContent("#projName")).includes("todo-cli") && (await page.textContent("#checks")).includes("Valid"), "community starter: the finished example opens");
+  await page.click('[data-starter="todo-cli"]');
 
   const PLAN = JSON.stringify({ project: "todo-cli", summary: "A to-do list for the terminal.", commits: [
     { message: "Add todo core", files: [{ path: "todo.py", purpose: "task functions" }] },

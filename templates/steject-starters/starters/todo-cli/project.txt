@@ -1,0 +1,162 @@
+=== PROJECT: todo-cli ===
+=== FILE: .gitignore ===
+__pycache__/
+*.pyc
+.pytest_cache/
+todo.json
+=== FILE: requirements.txt ===
+pytest
+=== COMMIT: Set up the project ===
+=== FILE: todo.py ===
+"""Task storage and logic for a tiny to-do list. No printing here: easy to test."""
+import json
+import os
+
+DEFAULT_PATH = "todo.json"
+
+
+def load(path=DEFAULT_PATH):
+    """Return the saved tasks, or an empty list if there is no file yet."""
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save(tasks, path=DEFAULT_PATH):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(tasks, f, indent=2)
+
+
+def add(tasks, text):
+    text = text.strip()
+    if not text:
+        raise ValueError("A task needs some text.")
+    next_id = max((t["id"] for t in tasks), default=0) + 1
+    tasks.append({"id": next_id, "text": text, "done": False})
+    return next_id
+
+
+def find(tasks, task_id):
+    for t in tasks:
+        if t["id"] == task_id:
+            return t
+    raise KeyError(f"No task with id {task_id}.")
+
+
+def complete(tasks, task_id):
+    find(tasks, task_id)["done"] = True
+
+
+def delete(tasks, task_id):
+    tasks.remove(find(tasks, task_id))
+=== COMMIT: Add task storage and logic ===
+=== FILE: cli.py ===
+"""Command-line interface: python cli.py add "Buy milk" | list | done 1 | delete 1"""
+import argparse
+import sys
+
+import todo
+
+
+def main(argv=None, path=todo.DEFAULT_PATH):
+    parser = argparse.ArgumentParser(description="A tiny to-do list.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p_add = sub.add_parser("add", help="add a task")
+    p_add.add_argument("text")
+    sub.add_parser("list", help="show all tasks")
+    for name in ("done", "delete"):
+        p = sub.add_parser(name, help=f"{name} a task by id")
+        p.add_argument("id", type=int)
+    args = parser.parse_args(argv)
+
+    tasks = todo.load(path)
+    try:
+        if args.command == "add":
+            print(f"Added task {todo.add(tasks, args.text)}.")
+        elif args.command == "list":
+            if not tasks:
+                print("Nothing to do!")
+            for t in tasks:
+                print(f"[{'x' if t['done'] else ' '}] {t['id']}: {t['text']}")
+        elif args.command == "done":
+            todo.complete(tasks, args.id)
+            print(f"Task {args.id} done.")
+        elif args.command == "delete":
+            todo.delete(tasks, args.id)
+            print(f"Task {args.id} deleted.")
+    except (ValueError, KeyError) as e:
+        print(f"Error: {e.args[0]}", file=sys.stderr)
+        return 1
+    todo.save(tasks, path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+=== COMMIT: Add the command-line interface ===
+=== FILE: test_todo.py ===
+import pytest
+
+import cli
+import todo
+
+
+def test_add_gives_increasing_ids():
+    tasks = []
+    assert todo.add(tasks, "a") == 1
+    assert todo.add(tasks, "b") == 2
+
+
+def test_add_rejects_empty_text():
+    with pytest.raises(ValueError):
+        todo.add([], "   ")
+
+
+def test_complete_and_delete():
+    tasks = []
+    todo.add(tasks, "a")
+    todo.complete(tasks, 1)
+    assert tasks[0]["done"] is True
+    todo.delete(tasks, 1)
+    assert tasks == []
+
+
+def test_unknown_id_raises():
+    with pytest.raises(KeyError):
+        todo.complete([], 7)
+
+
+def test_save_and_load_round_trip(tmp_path):
+    path = tmp_path / "t.json"
+    tasks = []
+    todo.add(tasks, "write tests")
+    todo.save(tasks, path)
+    assert todo.load(path) == tasks
+
+
+def test_cli_end_to_end(tmp_path, capsys):
+    path = tmp_path / "t.json"
+    assert cli.main(["add", "Buy milk"], path) == 0
+    assert cli.main(["done", "1"], path) == 0
+    assert cli.main(["list"], path) == 0
+    assert "[x] 1: Buy milk" in capsys.readouterr().out
+    assert cli.main(["delete", "9"], path) == 1
+=== COMMIT: Add tests ===
+=== FILE: README.md ===
+# todo-cli
+
+A tiny to-do list for the terminal. Tasks are saved in `todo.json`.
+
+## Run
+
+    python cli.py add "Buy milk"
+    python cli.py list
+    python cli.py done 1
+    python cli.py delete 1
+
+## Test
+
+    pip install -r requirements.txt
+    python -m pytest
+=== COMMIT: Add README ===

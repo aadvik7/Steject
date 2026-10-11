@@ -1,0 +1,11 @@
+{
+  "id": "todo-cli",
+  "title": "To-do list in the terminal",
+  "level": "beginner",
+  "lang": "Python",
+  "size": "small",
+  "time": "1 to 2 hours",
+  "idea": "A Python command-line to-do app: add, list, complete and delete tasks, saved to a JSON file. Use argparse, and add pytest tests for the task functions.",
+  "learn": ["keeping logic separate from input and output", "reading and writing JSON files", "argparse subcommands", "testing with pytest and tmp_path"],
+  "tags": ["cli", "files", "testing"]
+}

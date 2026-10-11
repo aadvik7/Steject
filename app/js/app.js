@@ -1069,11 +1069,13 @@
   });
 
   // ================================================================ SHIP: starter gallery
-  const STARTERS = Array.isArray(window.STE_STARTERS) ? window.STE_STARTERS : [];
-  let starterLvl = "all";
+  const STARTERS = Array.isArray(window.STE_STARTERS) ? window.STE_STARTERS.slice() : [];
+  // community starters: aadvik7/steject-starters (docs/STARTERS-REPO.md); only fetched when the student asks
+  const COMMUNITY = "https://raw.githubusercontent.com/aadvik7/steject-starters/main/";
+  let starterLvl = "all", starterPicked = null;
   function renderStarters() {
     const list = STARTERS.filter(s => starterLvl === "all" || s.level === starterLvl);
-    $("starterList").innerHTML = list.map(s => `<button type="button" class="starter" data-starter="${esc(s.id)}" title="${esc(s.idea)}">${esc(s.title)} <i>${esc(s.lang || "")}</i></button>`).join("");
+    $("starterList").innerHTML = list.map(s => `<button type="button" class="starter" data-starter="${esc(s.id)}" title="${esc(s.idea)}">${esc(s.title)} <i>${esc(s.lang || "")}${s.project ? " · example" : ""}</i></button>`).join("");
     $$("#starterLvl button").forEach(b => b.setAttribute("aria-pressed", b.dataset.lvl === starterLvl));
     $("starterBox").hidden = !STARTERS.length;
   }
@@ -1084,7 +1086,44 @@
     if (!s) return;
     $("ideaText").value = s.idea;
     setIdeaSize(s.size === "medium" ? "medium" : "small");
-    setStatus("ideaMsg", `Starter: ${s.title}. Change the idea if you like, then click Plan the project.`, "info");
+    starterPicked = s;
+    $("starterExample").hidden = !s.project;
+    setStatus("ideaMsg", `Starter: ${s.title}. Change the idea if you like, then click Plan the project.${s.learn ? " You'll learn: " + s.learn.join(", ") + "." : ""}`, "info");
+  });
+  $("starterMore").addEventListener("click", async () => {
+    $("starterMore").disabled = true;
+    setStatus("starterMsg", "Loading community starters…", "info");
+    try {
+      const res = await fetch(COMMUNITY + "index.json", { cache: "no-store" });
+      if (res.status === 404) throw new Error("The community starter repo isn't online yet. The built-in starters above still work.");
+      if (!res.ok) throw new Error("Couldn't load community starters (error " + res.status + ").");
+      const idx = await res.json();
+      let added = 0;
+      (idx.starters || []).forEach(s => {
+        if (!s || !/^[a-z0-9-]{1,60}$/.test(s.id || "") || !s.title || !s.idea) return;
+        const entry = { id: "c-" + s.id, level: ["beginner", "intermediate", "advanced"].includes(s.level) ? s.level : "beginner", lang: String(s.lang || ""), size: s.size === "medium" ? "medium" : "small",
+          title: String(s.title).slice(0, 40), idea: String(s.idea).slice(0, 400), learn: Array.isArray(s.learn) ? s.learn.slice(0, 6).map(String) : null,
+          project: /^starters\/[a-z0-9-]+\/project\.txt$/.test(s.project || "") ? s.project : null };
+        const at = STARTERS.findIndex(x => x.id === entry.id);
+        if (at >= 0) STARTERS[at] = entry; else { STARTERS.push(entry); added++; }
+      });
+      renderStarters();
+      setStatus("starterMsg", `Added ${plural(added, "community starter")}.`, "ok");
+    } catch (e) { setStatus("starterMsg", e.message === "Failed to fetch" ? "Couldn't reach GitHub. Check your connection." : e.message, "bad"); }
+    finally { $("starterMore").disabled = false; }
+  });
+  $("starterExample").addEventListener("click", async () => {
+    const s = starterPicked;
+    if (!s || !s.project) return;
+    try {
+      const res = await fetch(COMMUNITY + s.project, { cache: "no-store" });
+      if (!res.ok) throw new Error("Couldn't download the example (error " + res.status + ").");
+      const text = await res.text();
+      C.parse(text);
+      setText(text, !!ta.value.trim());
+      S.imported = null;
+      setStatus("starterMsg", "Opened the finished example. Read it in Inspect, or use Learn to understand it.", "ok");
+    } catch (e) { setStatus("starterMsg", e.message, "bad"); }
   });
 
   // ================================================================ SHIP: idea → plan → approve → write

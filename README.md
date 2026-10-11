@@ -2,13 +2,15 @@
 
 <h1 align="center">STEJECT</h1>
 
-<p align="center"><b>Turn a project written by ChatGPT or Claude into a real GitHub repo with real commits.</b><br>
-Desktop app for Windows, Mac and Linux. Free, open source, and private: your code goes only to GitHub.</p>
+<p align="center"><b>From an idea or a chat reply to a real, tested GitHub repo you actually understand.</b><br>
+Desktop app for Windows, Mac and Linux, plus a web version. Free, open source, no server, private by default.</p>
 
 <p align="center">
   <a href="../../releases/latest"><b>⬇ Download the app</b></a> ·
   <a href="docs/USER-GUIDE.md">User guide</a> ·
-  <a href="PROMPT_TEMPLATE.md">Prompts</a>
+  <a href="PROMPT_TEMPLATE.md">Prompts</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a> ·
+  <a href="ROADMAP.md">Roadmap</a>
 </p>
 
 ![STEJECT ship screen](docs/screenshots/ship.png)
@@ -124,16 +126,13 @@ electron/       desktop wrapper (main process + preload bridge)
 test/           unit, UI and desktop tests
 ```
 
-## Roadmap
+## Contribute
 
-- [ ] Image and binary files in projects
-- [ ] Sign installers so there's no first-run warning
-- [ ] Check Node.js, Java and Go projects (today: Python and web pages)
-- [ ] Ship an idea in one click (write, check and push without stopping at Inspect)
+STEJECT is built by and for students. Contributions are very welcome, especially from first-timers.
 
-### Add a starter idea
-
-Starters live in [`app/starters/starters.js`](app/starters/starters.js). Add one object (level, language, size, title, idea) and open a pull request.
+- **How to contribute:** read [CONTRIBUTING.md](CONTRIBUTING.md) (setup, where things are, the three rules: no server, private by default, plain words). Be kind: [Code of Conduct](CODE_OF_CONDUCT.md).
+- **How to add a starter:** add one object to [`app/starters/starters.js`](app/starters/starters.js) and open a pull request. Full starters with a tested reference project go in the [steject-starters repo](docs/STARTERS-REPO.md).
+- **What's next:** [ROADMAP.md](ROADMAP.md). **Security problems:** [SECURITY.md](SECURITY.md), never a public issue.
 
 ## License
 
