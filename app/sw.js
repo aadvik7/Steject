@@ -7,7 +7,7 @@ const CACHE = "steject-shell-" + ([BUILD.version, BUILD.commit || BUILD.built].f
 const SHELL = [
   "./", "index.html", "manifest.webmanifest",
   "css/app.css", "css/fonts.css",
-  "js/build-info.js", "js/core.js", "js/safety.js", "js/github.js", "js/ai.js", "js/runner.js", "js/pyworker.js", "js/net.js", "js/networker.js", "js/app.js",
+  "js/build-info.js", "js/core.js", "js/safety.js", "js/github.js", "js/ai.js", "js/runner.js", "js/pyworker.js", "js/net.js", "js/networker.js", "js/webai.js", "js/webai-worker.js", "js/app.js",
   "preview.html", "starters/starters.js",
   "vendor/jszip.min.js", "vendor/marked.min.js", "vendor/purify.min.js",
   "icons/icon.svg", "icons/icon-32.png", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png",

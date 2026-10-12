@@ -688,6 +688,59 @@ async function customMock(route) {
   await page.setViewportSize({ width: 1360, height: 1000 });
   await shot({ path: `${OUT}/8-desktop-dark.png`, fullPage: true });
 
+  // ---- 11b. in-browser AI: headless Chromium has no usable GPU → a clear "not supported" message
+  await page.evaluate(() => window.__steject.go("settings"));
+  await page.click("#provWeb");
+  await page.waitForFunction(() => /WebGPU|not supported|Not supported/.test(document.querySelector("#webSupport").textContent), null, { timeout: 8000 });
+  ok(/Not supported on this device|doesn't support WebGPU/.test(await page.textContent("#webSupport")) && (await page.textContent("#chipAi")).includes("not supported"), "in-browser AI: unsupported devices get a plain message");
+  await page.click("#provOllama"); await page.waitForTimeout(300);
+
+  // ---- 11c. in-browser AI on a device with WebGPU (graphics card and model stubbed): size first, download, then Learn works
+  const wctx = await browser.newContext({ viewport: { width: 1360, height: 1000 } });
+  await wctx.route("http://localhost:11434/**", r => r.abort());
+  await wctx.addInitScript(() => {
+    Object.defineProperty(navigator, "gpu", { value: { requestAdapter: async () => ({ features: new Set(["shader-f16"]), limits: {} }) } });
+  });
+  let webDownloads = 0;
+  await wctx.route("https://huggingface.co/**", route => route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "application/json" }, body: JSON.stringify({ records: [{ nbytes: 600e6 }, { nbytes: 269e6 }] }) }));
+  await wctx.route("https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.86/+esm", route => { webDownloads++; route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "text/javascript" }, body: `
+    const cached = new Set();
+    export const prebuiltAppConfig = { model_list: [{ model_id: "Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC", model: "https://huggingface.co/mlc-ai/Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC", vram_required_MB: 1630, overrides: { context_window_size: 4096 } }] };
+    export async function hasModelInCache(id) { return cached.has(id); }
+    export async function deleteModelAllInfoInCache(id) { cached.delete(id); }
+    export async function CreateMLCEngine(id, opts) {
+      for (const p of [0.25, 0.6, 1]) opts.initProgressCallback({ progress: p, text: "Fetching param cache[" + Math.round(p * 100) + "%]" });
+      cached.add(id);
+      return { unload: async () => {}, interruptGenerate() {}, chat: { completions: { create: async req => (async function* () {
+        self.__lastReq = req;
+        yield { choices: [{ delta: { content: "## What it does\\nRuns on your graphics card. Prompt chars: " + req.messages.reduce((n, m) => n + m.content.length, 0) } }] };
+        yield { choices: [{ delta: {}, finish_reason: "stop" }], usage: { total_tokens: 33 } };
+      })() } } };
+    }` }); });
+  const wp = await wctx.newPage();
+  wp.on("pageerror", e => errors.push("web-ai page: " + e.message));
+  await wp.goto(base);
+  await wp.evaluate(() => window.__steject.go("settings"));
+  await wp.click("#provWeb");
+  await wp.waitForFunction(() => /869 MB/.test(document.querySelector("#webModels").textContent), null, { timeout: 8000 });
+  ok((await wp.textContent("#webSupport")).includes("supports WebGPU") && (await wp.textContent("#webModels")).includes("Download (869 MB)") && webDownloads === 0, "in-browser AI: shows the download size first, downloads nothing yet");
+  ok((await wp.textContent("#webBox")).includes("Weaker than Groq or Ollama") && (await wp.textContent("#chipAi")) === "AI: no model", "in-browser AI: warns it's weaker; off until a model is downloaded");
+  await wp.click('[data-web-dl="Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC"]');
+  await wp.waitForFunction(() => /In use/.test(document.querySelector("#webModels").textContent), null, { timeout: 8000 });
+  ok((await wp.textContent("#chipAi")) === "AI: in browser" && webDownloads === 1, "in-browser AI: download with progress, then it's in use");
+  await wp.evaluate(() => window.__steject.go("ship"));
+  await wp.fill("#manifest", "=== PROJECT: big ===\n=== FILE: big.py ===\n" + "x = 1  # a long line of code\n".repeat(1200) + "=== COMMIT: Add big file ===");
+  await wp.waitForTimeout(300);
+  await wp.click('nav [data-go="learn"]'); await wp.click("#lExplain");
+  await wp.waitForFunction(() => /graphics card/.test(document.querySelector("#learnOut").textContent), null, { timeout: 8000 });
+  const promptChars = +(await wp.textContent("#learnOut")).match(/Prompt chars: (\d+)/)[1];
+  ok(promptChars < 12000, "in-browser AI: Learn works, and long prompts are cut to fit the small model (" + promptChars + " characters)");
+  await wp.evaluate(() => window.__steject.go("settings"));
+  ok(/In-browser AI: 1 request · 33 tokens/.test(await wp.textContent("#usageLine")), "in-browser AI: counted in usage");
+  await wp.click('[data-web-del="Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC"]'); await wp.waitForTimeout(300);
+  ok((await wp.textContent("#chipAi")) === "AI: no model" && (await wp.textContent("#webModels")).includes("Download"), "in-browser AI: Delete removes the model");
+  await wctx.close();
+
   // ---- 12. desktop checks (renderer side): a stand-in bridge records what would run on the computer
   const dctx = await browser.newContext({ viewport: { width: 1360, height: 1000 } });
   await dctx.route("http://localhost:11434/**", ollama);

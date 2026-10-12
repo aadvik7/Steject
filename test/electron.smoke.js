@@ -58,6 +58,8 @@ const fakeOllama = http.createServer((req, res) => {
   }));
   ok(preview === "ready", "sandboxed project preview loads in the desktop app");
   ok(await win.evaluate(() => typeof window.steNative.allowHost === "function"), "bridge can allow the user's AI address");
+  const webEnv = await win.evaluate(() => SteWebAI.env());
+  ok(webEnv.caches === true, "in-browser AI: its worker can keep a downloaded model (Cache Storage available)");
   const tools = await win.evaluate(() => window.steNative.checks.detect());
   ok(/^v\d+/.test(tools.node || ""), "desktop checks: finds the installed Node.js (" + tools.node + ", network " + tools.isolation + ")");
   const pass = await win.evaluate(() => window.steNative.checks.run({

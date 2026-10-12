@@ -40,6 +40,7 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **AI helper, your choice:**
   - **Free cloud (Groq):** paste a free API key and it works in a minute. Your text goes to Groq.
   - **Ollama:** free and private, running on your computer.
+  - **In my browser (no key):** a small model runs on your graphics card with WebGPU. No key, no account, nothing to install, and nothing leaves your computer. Weaker than the others; best for Learn and small projects.
   - **Any OpenAI-style service:** OpenRouter, Google Gemini, LM Studio or your college's server, with a usage counter for free-tier limits.
 - **Learn mode:** explains every file the way an interviewer would ask about it, quizzes you, runs a mock interview, and writes resume bullets. An optional **understanding gate** makes you pass before you push, and can add your score to the README.
 - **History:** every project you've shipped, with links.

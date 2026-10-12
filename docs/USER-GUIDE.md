@@ -126,6 +126,7 @@ Needs an AI helper. Open **Learn**:
 | GitHub token | Needed to push. Use a classic token with the `repo` scope. |
 | Telegram | A message after every push. Uncheck *Alert after every push* to pause it. |
 | AI helper | Choose **Free cloud (Groq)** (paste a free key from console.groq.com/keys; your text is sent to Groq), **Ollama** (runs on your computer; `qwen2.5-coder:3b` suits laptops with 8 GB RAM, `7b` gives better answers with 16 GB), or **Other (OpenAI-style)**: pick a preset (OpenRouter, Google Gemini, LM Studio) or type any https address, add its key, and pick a model. |
+| In my browser (no key) | Runs a small AI model on your graphics card with WebGPU (Chrome or Edge on a computer with a graphics card). STEJECT first checks your device; if it isn't supported it says so. Each model shows its download size (about 0.4 to 0.9 GB) and downloads only when you click **Download**, with a progress bar. It's kept on this computer; **Delete** removes it. It's weaker than Groq or Ollama: best for Learn and small projects, and long files are cut to fit. |
 | Usage today | Requests and tokens used today with the current AI helper. Set a daily request limit to get a warning near it. |
 | Theme | System, light or dark. |
 | Remove all saved data | Deletes tokens, settings and history from this computer. |

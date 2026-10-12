@@ -396,6 +396,17 @@
         <button type="button" id="provGroq" aria-pressed="false">Free cloud (Groq)</button>
         <button type="button" id="provOllama" aria-pressed="true">On my computer (Ollama)</button>
         <button type="button" id="provCustom" aria-pressed="false">Other (OpenAI-style)</button>
+        <button type="button" id="provWeb" aria-pressed="false">In my browser (no key)</button>
+      </div>
+
+      <div class="stack" id="webBox" hidden>
+        <p class="status" id="webSupport" role="status"></p>
+        <div class="callout warn"><span><b>Weaker than Groq or Ollama.</b> A small model runs on your graphics card: no key, no account, nothing to install, and your text never leaves this computer. It works best for <b>Learn mode and small projects</b>; long files get cut to fit.</span></div>
+        <div class="models" id="webModels"></div>
+        <div class="stack" id="webProg" hidden>
+          <div class="row" style="justify-content:space-between"><span class="note" id="webProgText"></span></div>
+          <div class="progress"><div id="webProgBar"></div></div>
+        </div>
       </div>
 
       <div class="stack" id="customBox" hidden>
@@ -496,6 +507,7 @@
 <script src="js/safety.js"></script>
 <script src="js/github.js"></script>
 <script src="js/ai.js"></script>
+<script src="js/webai.js"></script>
 <script src="js/net.js"></script>
 <script src="js/runner.js"></script>
 <script src="starters/starters.js"></script>

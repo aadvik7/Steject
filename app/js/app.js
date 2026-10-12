@@ -86,6 +86,7 @@
     provider: store.get("aiProvider", "ollama"),          // "ollama" | "groq" | "custom"
     groq: { key: "", bad: false, models: [], model: store.get("groqModel", null) },
     custom: { url: store.get("customUrl", ""), key: "", model: store.get("customModel", ""), ok: false, models: [] },
+    web: { probe: null, model: store.get("webModel", "Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC"), loaded: null, sizes: {}, busy: false },
     undo: null,
     prevFiles: null,     // Map of the files before the last AI change: drives the "changed" badges and diffs
     run: null,           // last "does it run" result {fp, status, summary, output, kind}
@@ -94,14 +95,17 @@
   };
 
   // ---- which AI helper is active (local Ollama, free cloud Groq, or any OpenAI-style address)
+  const webId = () => { const m = SteWebAI.MODELS.find(x => x.id === S.web.model) || SteWebAI.MODELS[0]; return SteWebAI.variant(m, S.web.probe ? S.web.probe.f16 : true); };
+  const webCached = () => store.get("webCached", {});
   function aiOn() {
+    if (S.provider === "web") return !!(S.web.probe && S.web.probe.ok && webCached()[webId()]);
     if (S.provider === "groq") return !!(S.groq.key && S.groq.model && !S.groq.bad);
     if (S.provider === "custom") return !!(S.custom.ok && S.custom.url && S.custom.model);
     return !!(S.ai.ok && S.ai.model);
   }
-  function aiModel() { return S.provider === "groq" ? S.groq.model : S.provider === "custom" ? S.custom.model : S.ai.model; }
+  function aiModel() { return S.provider === "groq" ? S.groq.model : S.provider === "custom" ? S.custom.model : S.provider === "web" ? webId() : S.ai.model; }
   const hostOf = u => { try { return new URL(u).host; } catch { return "the AI service"; } };
-  function aiLabel() { return S.provider === "groq" ? "Groq" : S.provider === "custom" ? hostOf(S.custom.url) : "your local AI"; }
+  function aiLabel() { return S.provider === "groq" ? "Groq" : S.provider === "custom" ? hostOf(S.custom.url) : S.provider === "web" ? "the in-browser AI" : "your local AI"; }
   // Ship it for me sets S.auto; every AI call counts against its limits
   function budgetTick() {
     const a = S.auto;
@@ -117,15 +121,21 @@
     };
     if (S.provider === "groq") return AI.groq(S.groq.key, hooks);
     if (S.provider === "custom") return AI.compat({ base: S.custom.url, key: S.custom.key, name: hostOf(S.custom.url), keyHelp: "Check the key in Settings.", fetch: SteNet.fetch, ...hooks });
+    if (S.provider === "web") {
+      const id = webId(), c = SteWebAI.client(id, { onRequest: hooks.onRequest, onUsage: hooks.onUsage, ctx: S.web.sizes[id] ? S.web.sizes[id].ctx : 4096 });
+      const chat = c.chat;
+      c.chat = async (...a) => { await webStart(id); return chat(...a); };   // starts the model from the cache (never downloads)
+      return c;
+    }
     const c = AI.ollama(S.ai.url), chat = c.chat;
     c.chat = async (...a) => { budgetTick(); countUsage("ollama", 0); return chat(...a); };
     return c;
   }
   function ollama() { return AI.ollama(S.ai.url); }
   // how much text the active helper can rewrite in one go (free cloud has a per-minute token cap)
-  function repairLimit() { return S.provider === "groq" ? 12000 : S.provider === "custom" ? 40000 : 60000; }
+  function repairLimit() { return S.provider === "web" ? 6000 : S.provider === "groq" ? 12000 : S.provider === "custom" ? 40000 : 60000; }
   // how much of the project to show the AI when it changes or fixes code
-  function codeBudget() { return S.provider === "groq" ? 14000 : 30000; }
+  function codeBudget() { return S.provider === "web" ? 6000 : S.provider === "groq" ? 14000 : 30000; }
   const cleanFence = t => String(t).trim().replace(/^```[a-z]*\n?/i, "").replace(/\n?```\s*$/, "");
 
   // ---- usage counter (requests and tokens per provider, per day)
@@ -142,7 +152,7 @@
     const el = $("usageLine"); if (!el) return;
     const u = usage(), p = u[S.provider] || { req: 0, tok: 0 };
     const limit = parseInt(store.get("usageLimit", ""), 10) || 0;
-    const who = { groq: "Groq", custom: S.custom.url ? hostOf(S.custom.url) : "Other", ollama: "Ollama" }[S.provider];
+    const who = { groq: "Groq", custom: S.custom.url ? hostOf(S.custom.url) : "Other", ollama: "Ollama", web: "In-browser AI" }[S.provider];
     const near = limit && p.req >= limit * 0.8;
     setStatus("usageLine", `${who}: ${plural(p.req, "request")}${p.tok ? ` · ${p.tok.toLocaleString()} tokens` : ""}${limit ? ` of ${limit.toLocaleString()} a day` : ""}${near ? (p.req >= limit ? " · limit reached" : " · close to the limit") : ""}`, near ? "bad" : "");
   }
@@ -1083,6 +1093,12 @@
       chip.textContent = aiOn() ? "AI: groq" : S.groq.key ? (S.groq.bad ? "AI: bad key" : "AI: no model") : "AI: off";
       return;
     }
+    if (S.provider === "web") {
+      chip.classList.toggle("on", aiOn());
+      chip.classList.toggle("warn", !aiOn() && !!(S.web.probe && S.web.probe.ok));
+      chip.textContent = aiOn() ? "AI: in browser" : S.web.probe && !S.web.probe.ok ? "AI: not supported" : "AI: no model";
+      return;
+    }
     if (S.provider === "custom") {
       chip.classList.toggle("on", aiOn());
       chip.classList.toggle("warn", !aiOn() && !!S.custom.url);
@@ -1135,9 +1151,10 @@
 
   // ================================================================ SETTINGS: AI provider + Groq
   function setProvider(name, quiet) {
-    S.provider = name === "groq" || name === "custom" ? name : "ollama";
+    S.provider = ["groq", "custom", "web"].includes(name) ? name : "ollama";
     store.set("aiProvider", S.provider);
-    ["Groq", "Ollama", "Custom"].forEach(n => $("prov" + n).setAttribute("aria-pressed", S.provider === n.toLowerCase()));
+    ["Groq", "Ollama", "Custom", "Web"].forEach(n => $("prov" + n).setAttribute("aria-pressed", S.provider === n.toLowerCase()));
+    $("webBox").hidden = S.provider !== "web";
     $("groqBox").hidden = S.provider !== "groq";
     $("ollamaBox").hidden = S.provider !== "ollama";
     $("customBox").hidden = S.provider !== "custom";
@@ -1146,11 +1163,79 @@
       render(); renderLearn();
       if (S.provider === "ollama" && !S.ai.ok) checkAi();
       if (S.provider === "custom" && S.custom.url && !S.custom.ok) checkCustom(true);
+      if (S.provider === "web") renderWeb();
     }
   }
   $("provGroq").addEventListener("click", () => setProvider("groq"));
   $("provOllama").addEventListener("click", () => setProvider("ollama"));
   $("provCustom").addEventListener("click", () => setProvider("custom"));
+  $("provWeb").addEventListener("click", () => setProvider("web"));
+
+  // ================================================================ SETTINGS: in-browser AI (WebGPU, no key)
+  async function webStart(id) {
+    if (S.web.loaded === id) return;
+    if (!webCached()[id]) throw new Error("Download the in-browser model in Settings first.");
+    toast("Starting the in-browser AI…");
+    await SteWebAI.load(id);
+    S.web.loaded = id;
+  }
+  const mb = b => b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB";
+  async function renderWeb() {
+    if (!S.web.probe) {
+      setStatus("webSupport", "Checking whether this device supports WebGPU…", "info");
+      S.web.probe = await SteWebAI.probe();
+      renderAiChip(); render(); renderLearn();
+    }
+    const p = S.web.probe;
+    setStatus("webSupport", p.ok ? "✓ This device supports WebGPU." + (p.f16 ? "" : " (Using the 32-bit versions of the models, which your graphics card needs.)") : p.reason, p.ok ? "ok" : "bad");
+    const box = $("webModels");
+    if (!p.ok) { box.innerHTML = ""; return; }
+    const cached = webCached();
+    box.innerHTML = SteWebAI.MODELS.map(m => {
+      const id = SteWebAI.variant(m, p.f16), sz = S.web.sizes[id];
+      const have = cached[id], inUse = have && webId() === id;
+      const size = sz ? (sz.bytes ? mb(sz.bytes) + " download" : "size unknown") : "checking size…";
+      return `<div class="model ${inUse ? "sel" : ""}">
+        <span class="mn">${esc(m.name)}</span><span class="md">${esc(m.note)} · ${esc(have ? "downloaded" : size)}</span>
+        <span class="ma">${have
+          ? (inUse ? `<span class="tag">In use</span>` : `<button type="button" class="btn small" data-web-use="${esc(m.id)}">Use</button>`) + ` <button type="button" class="btn small" data-web-del="${esc(id)}">Delete</button>`
+          : `<button type="button" class="btn small" data-web-dl="${esc(m.id)}" ${S.web.busy ? "disabled" : ""}>Download${sz && sz.bytes ? " (" + mb(sz.bytes) + ")" : ""}</button>`}</span>
+      </div>`;
+    }).join("");
+    // sizes: only each model's small file list is fetched here, never the model itself
+    SteWebAI.MODELS.forEach(async m => {
+      const id = SteWebAI.variant(m, p.f16);
+      if (S.web.sizes[id] || cached[id]) return;
+      S.web.sizes[id] = { pending: true };
+      try { S.web.sizes[id] = await SteWebAI.size(id); } catch { S.web.sizes[id] = { bytes: 0 }; }
+      if (S.provider === "web") renderWeb();
+    });
+  }
+  $("webModels").addEventListener("click", async e => {
+    const dl = e.target.closest("[data-web-dl]"), use = e.target.closest("[data-web-use]"), del = e.target.closest("[data-web-del]");
+    if (use) { S.web.model = use.dataset.webUse; store.set("webModel", S.web.model); renderWeb(); renderAiChip(); render(); renderLearn(); }
+    if (del) {
+      try { await SteWebAI.remove(del.dataset.webDel); } catch {}
+      const c = webCached(); delete c[del.dataset.webDel]; store.set("webCached", c);
+      if (S.web.loaded === del.dataset.webDel) S.web.loaded = null;
+      toast("Deleted the model from this computer."); renderWeb(); renderAiChip(); render(); renderLearn();
+    }
+    if (dl) {
+      const m = SteWebAI.MODELS.find(x => x.id === dl.dataset.webDl), id = SteWebAI.variant(m, S.web.probe.f16);
+      S.web.busy = true; $("webProg").hidden = false; renderWeb();
+      try {
+        await SteWebAI.load(id, d => { $("webProgText").textContent = d.text || "Downloading…"; $("webProgBar").style.width = Math.round((d.progress || 0) * 100) + "%"; });
+        const c = webCached(); c[id] = true; store.set("webCached", c);
+        S.web.model = m.id; store.set("webModel", m.id); S.web.loaded = id;
+        toast(`${m.name} is ready. It's saved on this computer.`);
+      } catch (err) {
+        toast("Download failed: " + err.message);
+      } finally {
+        S.web.busy = false; $("webProg").hidden = true; $("webProgBar").style.width = "0";
+        renderWeb(); renderAiChip(); render(); renderLearn(); renderUsage();
+      }
+    }
+  });
 
   function renderGroq() {
     $("groqRemove").hidden = !S.groq.key;
@@ -1923,6 +2008,7 @@
     setProvider(S.provider, true);
     if (S.groq.key) checkGroq(true);
     if (S.provider === "custom" && S.custom.url) checkCustom(true);
+    if (S.provider === "web") renderWeb();
     $("aboutLine").textContent = `STEJECT v${BUILD.version}${native ? " · desktop app" : ""} · open source, MIT license`;
     if (BUILD.repo) { $("repoLink").href = `https://github.com/${BUILD.repo}`; $("repoLink").hidden = false; $("checkUpd").hidden = !native; }
     $("storageNote").textContent = native ? "Tokens and keys are encrypted by your operating system and stay on this computer." : "Tokens and keys are stored in this browser only. Each one is sent only to its own service (GitHub, Telegram, Groq).";
