@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0 — 2026-10-12
+
+Still free, serverless and private by default.
+
+- **Ship it for me:** one button from idea to pushed repo: plan (you approve it), write, check, AI fixes, safety checks, push. You set the limits first (AI calls, tokens, files, fix tries); private repo by default; it never pushes a possible secret and stops for you on warnings. Live step list, Stop button, summary at the end.
+- **AI with no key and no install:** a small model runs in the browser on your graphics card (WebGPU, via WebLLM). STEJECT checks your device first, shows the download size before anything downloads, keeps the model in the browser cache, and warns that it's weaker than Groq or Ollama.
+- **Real checks on the desktop:** Node.js, Go, Java and C/C++ projects (and Python packages the browser can't run) are checked with your own installed tools, always after you approve the exact commands, in a temporary folder that's deleted afterwards, without your tokens, with time and output limits and no network for package managers.
+- **Issue → pull request:** paste an issue link; STEJECT explains the code in plain words, proposes a plan you approve, writes and checks the change, asks you three questions about it, and opens a pull request (from your fork if needed) with a plain-words description.
+- **Classroom with PROOF.md:** teachers create assignment files (brief, requirements, starter files, visible or hidden checks, rubric); students get a PROOF.md in their repo (commits, check results, understanding score, SHA-256 fingerprint); the Review screen verifies a whole class against the real commits and re-runs the checks.
+- **Checkpoints and undo:** every AI change saves a checkpoint you can restore in one click; the last push to a repo can be undone with a revert commit or a confirmed reset.
+- **Repo doctor:** a score and plain-words checklist for any repo (README, license, .gitignore and committed junk, tests, CI, big files, secrets, old dependencies, structure), and *Fix it* turns the gaps into a pull request.
+- **Safety checks before push:** secrets in files and commit messages always block; typo-named packages, deprecated or hijacked packages, install scripts, unpinned or URL dependencies and GPL code in a permissive project are warnings you confirm.
+- **Network policy tightened** to an explicit host list again; AI addresses you add go through a small worker that only calls https (or this computer). Clear message when Python for the browser can't be downloaded.
+- **Community:** CONTRIBUTING, Code of Conduct, SECURITY, ROADMAP, issue and PR templates, and the spec, template and validator for the `steject-starters` repo. The gallery can load community starters and open a finished example.
+- New **Tools** page and an in-app **Help** panel (Settings).
+
 ## 1.2.0 — 2026-10-12
 
 A small, student-friendly Claude Code: describe a project, review the plan, get working code, change it by chatting, and prove you understand it.

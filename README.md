@@ -49,8 +49,10 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **History:** every project you've shipped, with links.
 - **Ship kit:** no token? Download a script that builds the repo with Git on your computer.
 
-| Update mode with changes view | Learn mode quiz |
+| Plan first, then write | Repo doctor |
 |---|---|
+| ![Plan](docs/screenshots/plan.png) | ![Repo doctor](docs/screenshots/doctor.png) |
+| **Update mode with changes view** | **Learn mode quiz** |
 | ![Update](docs/screenshots/update-diff.png) | ![Learn](docs/screenshots/learn.png) |
 
 ## Install

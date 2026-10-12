@@ -580,6 +580,18 @@
       <label class="cb" id="checksInstallRow"><input id="checksInstall" type="checkbox"> <span>Let checks run <code>npm install</code> first (downloads the project's packages, so it uses the network)</span></label>
     </section>
 
+    <section class="panel help" aria-labelledby="s-help">
+      <h2 class="k" id="s-help" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">Help: what everything does</h2>
+      <details><summary>Ship it for me</summary><p>Ship → Start from an idea → <b>Ship it for me</b>. Set limits (AI calls, tokens, files, fix tries; private repo by default), approve the plan, and STEJECT writes, checks, fixes and pushes. It never pushes a possible secret and stops for you on warnings.</p></details>
+      <details><summary>Plan, change, check</summary><p><b>Plan the project</b> shows the files and commits first; nothing is written until you approve. <b>Change it with AI</b> returns only the changed files as a new commit. <b>Check it runs</b> runs Python and web pages in a sandbox, other languages with your own tools in the desktop app (always after you approve the commands), and <b>Fix with AI</b> tries up to 3 fixes.</p></details>
+      <details><summary>Safety checks</summary><p>Before every push: possible secrets in files or commit messages <b>block</b> the push. Warnings (typo-named packages, install scripts, deprecated packages, GPL code in an MIT project…) need you to tick <i>I checked</i>.</p></details>
+      <details><summary>Checkpoints and undo</summary><p>Every AI change saves a checkpoint (Ship → Checkpoints). History → <b>Undo</b> reverts a repo's last push with a new commit, or resets it if you type the repo name.</p></details>
+      <details><summary>AI helpers</summary><p><b>Groq</b>: free cloud key. <b>Ollama</b>: runs on your computer. <b>Other</b>: any OpenAI-style address. <b>In my browser</b>: a small model on your graphics card, no key; weaker, best for Learn. Usage today is shown under the AI helper.</p></details>
+      <details><summary>Learn and the understanding gate</summary><p>Explain files, take a quiz or a mock interview, write resume bullets. With the gate on, you must pass for the current version before pushing.</p></details>
+      <details><summary>Tools: Repo doctor, issues, classroom</summary><p><b>Repo doctor</b> scores any repo and turns the gaps into a pull request. <b>Issue → pull request</b> explains, plans, writes, checks and asks you about a fix before opening the PR. <b>Classroom</b> creates and opens assignment files, adds PROOF.md and reviews a whole class.</p></details>
+      <p class="note"><a href="https://github.com/aadvik7/Steject/blob/main/docs/USER-GUIDE.md" target="_blank" rel="noopener">The full user guide</a> · <a href="https://github.com/aadvik7/Steject/issues/new/choose" target="_blank" rel="noopener">Report a problem or suggest an idea</a></p>
+    </section>
+
     <section class="panel" aria-labelledby="s-app">
       <h2 class="k" id="s-app" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">App</h2>
       <div class="stack">

@@ -825,7 +825,7 @@ async function customMock(route) {
   // ---- 11. layout: phone width + dark theme
   await page.click("#loadSample").catch(() => {});
   await page.emulateMedia({ colorScheme: "dark" });
-  for (const pg of ["ship", "learn", "history", "settings"]) {
+  for (const pg of ["ship", "learn", "tools", "history", "settings"]) {
     await page.setViewportSize({ width: 400, height: 900 });
     await page.evaluate(p => window.__steject.go(p), pg);
     await page.waitForTimeout(120);
