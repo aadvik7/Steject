@@ -132,6 +132,16 @@ Needs an AI helper and GitHub connected. Paste an issue link (`https://github.co
 6. **Your turn:** three questions about *this change*. You need 2 of 3. If you miss, read the change and ask for new questions.
 7. **Pull request:** a plain-words description (what changes, why, how it was checked, and `Fixes #12` so the issue closes when it's merged). Edit it, then **Open the pull request**. If you can't push to the repo, STEJECT makes your fork and opens the pull request from there.
 
+## Classroom: assignments and PROOF.md (Tools → Classroom)
+
+No server and no accounts: everything travels as a file and lives in the students' own GitHub repos.
+
+**Teacher, create an assignment:** fill in the title, a brief, requirements, optional starter files (the project on your Ship page), checks (test files in the manifest format), an optional rubric and how much understanding you require. Untick *Students can see the checks* to make them **hidden**: they're left out of the project and the repo and only run when checking. They're still inside the assignment file, so a determined student could read them. **Download the assignment file** and share it however you like.
+
+**Student:** **Open an assignment file**, read the brief and click **Start the project**. A banner on the Ship page shows the assignment. **Check it runs** includes the hidden checks. If the assignment needs understanding, pass the quiz or mock interview on Learn. When you push, STEJECT adds **PROOF.md** in one extra commit right after your work: your commits, the check result, your understanding score (self-reported) and a **fingerprint**: a SHA-256 of the assignment id and your last work commit. It shows which assignment and commit the proof is about; it doesn't prove who wrote the code.
+
+**Teacher, review:** open the same assignment file, paste the students' repo links (one per line) and click **Review**. For each repo STEJECT checks that PROOF.md is for this assignment, that the fingerprint matches, that it was added right after the work it describes (nothing changed later), that the listed commits are really in the history, and **re-runs the checks** on the real code instead of trusting the claim. You get one table for the whole class; **Copy as CSV** pastes it into a spreadsheet.
+
 ## 4. If a push fails
 
 Nothing on GitHub changes until the very last step, so a failed push never leaves a half-updated branch. Click **Resume push** to continue from the commit that failed.

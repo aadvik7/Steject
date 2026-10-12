@@ -629,6 +629,16 @@
       if (!/^[A-Za-z0-9._-]{1,100}$/.test(name) || /^\.+$/.test(name)) { setStatus("shipMsg", "Repo name can use letters, numbers, - _ . only.", "bad"); return; }
       job = { mode: "new", name, description: $("repoDesc").value.trim(), isPrivate: document.querySelector('input[name="vis"]:checked').value === "private" };
     }
+    if (S.assignment && $("proofOn").checked && !resume) {
+      const a = S.assignment, fp = C.fingerprint(m), run = S.run && S.run.fp === fp && S.run.assignment === a.id ? S.run : null;
+      const rec = understood()[fp] || null;
+      job.proof = ({ workSha, commits }) => SteClass.proofMarkdown({
+        assignment: a, workSha, commits,
+        check: run ? { status: run.status === "pass" || run.status === "fail" ? run.status : "none", summary: run.summary } : { status: "none", summary: "The checks weren't run on this version before pushing." },
+        understanding: rec ? { kind: rec.kind, score: rec.score, total: rec.total } : null,
+        login: S.gh.login, date: today(),
+      });
+    }
     S.lastJob = { ...job, ctx: undefined };
     S.busy = true; updateShip();
     const log = makeLog();
@@ -1283,6 +1293,148 @@
     });
   }
 
+  // ---------------- Classroom
+  let classTab = "student", asgPending = null, revAsg = null, revRows = [];
+  function showClassTab(t) {
+    classTab = t;
+    $$("#classTabs [data-class]").forEach(b => b.setAttribute("aria-pressed", b.dataset.class === t));
+    ["student", "create", "review"].forEach(x => { $("class-" + x).hidden = x !== t; });
+  }
+  $("classTabs").addEventListener("click", e => { const b = e.target.closest("[data-class]"); if (b) showClassTab(b.dataset.class); });
+  async function readAssignmentFile(file) {
+    if (!file) return null;
+    if (file.size > 2 * 1024 * 1024) throw new Error("That file is too big for an assignment (2 MB at most).");
+    let raw;
+    try { raw = JSON.parse(await file.text()); } catch { throw new Error("That file isn't valid JSON, so it can't be a STEJECT assignment."); }
+    return SteClass.readAssignment(raw);
+  }
+  // --- student
+  function renderAssignment(a, box) {
+    $("asgTitle").textContent = a.title;
+    $("asgBrief").innerHTML = md(a.brief || "");
+    $("asgReq").innerHTML = a.requirements.length ? `<h3 class="k">Requirements</h3><ul>${a.requirements.map(r => `<li>${esc(r)}</li>`).join("")}</ul>` : "";
+    $("asgRubric").innerHTML = a.rubric.length ? `<h3 class="k">Rubric</h3><ul>${a.rubric.map(r => `<li>${esc(r.criterion)} · ${r.points} points</li>`).join("")}</ul>` : "";
+    const hidden = a.checks.filter(c => !c.visible).length, visible = a.checks.length - hidden;
+    $("asgChecksNote").textContent = `${plural(visible, "visible check")}${hidden ? ` and ${plural(hidden, "hidden check")} (they run when you click Check it runs)` : ""}.${a.gate.min ? ` You need ${Math.round(a.gate.min * 100)}% on the quiz or mock interview.` : ""}`;
+  }
+  $("asgFile").addEventListener("change", async e => {
+    const f = e.target.files[0]; e.target.value = "";
+    try {
+      asgPending = await readAssignmentFile(f);
+      renderAssignment(asgPending);
+      $("asgView").hidden = false;
+      setStatus("asgMsg", "Assignment opened. Read it, then click Start the project.", "ok");
+    } catch (err) { $("asgView").hidden = true; setStatus("asgMsg", err.message, "bad"); }
+  });
+  function setAssignment(a) {
+    S.assignment = a;
+    store.set("assignment", a ? JSON.parse(SteClass.writeAssignment(a)) : null);
+    renderAsgBar();
+  }
+  function renderAsgBar() {
+    const a = S.assignment, bar = $("asgBar");
+    $("proofRow").hidden = !a;
+    if (!a) { bar.hidden = true; return; }
+    $("proofText").textContent = `Add PROOF.md for "${a.title}" (check results, understanding score and a fingerprint your teacher can verify)`;
+    bar.hidden = false;
+    bar.innerHTML = `<span><b>Assignment:</b> ${esc(a.title)} · ${plural(a.requirements.length, "requirement")}${a.checks.length ? ` · ${plural(a.checks.length, "check")}` : ""}${a.gate.min ? ` · needs ${Math.round(a.gate.min * 100)}% understanding` : ""}</span><span class="row"><button class="btn small" type="button" data-go="tools" id="asgShow">Show the brief</button><button class="btn small" type="button" id="asgLeave">Leave the assignment</button></span>`;
+  }
+  $("asgBar").addEventListener("click", e => {
+    if (e.target.closest("#asgLeave")) { setAssignment(null); toast("Left the assignment. Your project is still here."); }
+    if (e.target.closest("#asgShow")) { showTool("class"); showClassTab("student"); asgPending = S.assignment; renderAssignment(S.assignment); $("asgView").hidden = false; }
+  });
+  $("asgStart").addEventListener("click", () => {
+    const a = asgPending;
+    if (!a) return;
+    setAssignment(a);
+    if (a.gate.min && !store.get("gateOn", false)) { store.set("gateOn", true); }
+    setText(C.serialize(SteClass.starterManifest(a)), !!ta.value.trim(), null, `Before starting "${a.title}"`);
+    S.imported = null;
+    go("ship");
+    toast(`Started "${a.title}". Build it, click Check it runs, then push. PROOF.md is added for you.`);
+  });
+  // --- teacher: create
+  $("mkTitle").addEventListener("input", () => { if (!$("mkId").dataset.touched) $("mkId").value = C.slug($("mkTitle").value).slice(0, 60); });
+  $("mkId").addEventListener("input", () => { $("mkId").dataset.touched = "1"; });
+  $("mkSave").addEventListener("click", async () => {
+    try {
+      let checkFiles = {};
+      if ($("mkChecks").value.trim()) {
+        let cm;
+        try { cm = C.parse($("mkChecks").value); } catch (e) { throw new Error("Checks: " + e.message); }
+        checkFiles = Object.fromEntries(C.finalFiles(cm));
+      }
+      const raw = {
+        steject_assignment: SteClass.FORMAT, id: $("mkId").value.trim(), title: $("mkTitle").value.trim(), brief: $("mkBrief").value,
+        requirements: $("mkReq").value.split("\n").map(s => s.trim()).filter(Boolean),
+        starter: { project: C.slug($("mkTitle").value || "assignment"), files: $("mkStarter").checked && S.m ? Object.fromEntries(C.finalFiles(S.m)) : {} },
+        checks: Object.keys(checkFiles).length ? [{ name: "Checks", visible: $("mkVisible").checked, files: checkFiles }] : [],
+        rubric: $("mkRubric").value.split("\n").map(l => l.split("|")).filter(p => p[0].trim()).map(p => ({ criterion: p[0].trim(), points: +(p[1] || 0) || 0 })),
+        gate: { min: +$("mkGate").value },
+      };
+      const a = SteClass.readAssignment(raw);
+      const text = SteClass.writeAssignment(a);
+      const ok = await saveFile(`${a.id}.steject-assignment.json`, new Blob([text], { type: "application/json" }));
+      setStatus("mkMsg", ok !== false ? `Saved ${a.id}.steject-assignment.json. Share it with your students (email, your course page…).` : "Cancelled.", ok !== false ? "ok" : "");
+    } catch (e) { setStatus("mkMsg", e.message, "bad"); }
+  });
+  // --- teacher: review
+  $("revFile").addEventListener("change", async e => {
+    const f = e.target.files[0]; e.target.value = "";
+    try { revAsg = await readAssignmentFile(f); setStatus("revAsg", `${revAsg.title} (${revAsg.id})`, "ok"); }
+    catch (err) { revAsg = null; setStatus("revAsg", err.message, "bad"); }
+  });
+  async function reviewOne(full, a, recheck) {
+    const st = await G.repoState(S.gh.token, full);
+    if (!st) throw new Error("Repo not found (or it's private and your token can't see it).");
+    if (!st.head) throw new Error("The repo is empty.");
+    const proofText = st.paths.has("PROOF.md") ? await G.readFile(S.gh.token, full, "PROOF.md", st.branch) : null;
+    const proof = SteClass.readProof(proofText);
+    const facts = { proofText, proofCommit: await G.commitInfo(S.gh.token, full, st.head) };
+    if (proof) {
+      try { facts.history = await G.history(S.gh.token, full, proof.work_commit, 100); } catch { facts.history = []; }
+      if (recheck) {
+        const read = await G.importRepo(S.gh.token, full);
+        read.files.delete("PROOF.md");
+        const m = SteClass.withChecks(C.manifestFromFiles(read.files, full.split("/")[1]), a);
+        const r = await SteRun.check(m, checkOpts({ project: full }));
+        facts.recheck = { status: r.status === "pass" || r.status === "fail" ? r.status : "none", summary: r.summary + (r.detail && r.status !== "pass" ? ". " + r.detail : "") };
+      }
+    }
+    return SteClass.verify(a, facts);
+  }
+  $("revGo").addEventListener("click", async () => {
+    const a = revAsg || S.assignment;
+    if (!a) { setStatus("revMsg", "Open the assignment file first.", "bad"); return; }
+    const list = [...new Set($("revRepos").value.split(/[\n,]+/).map(repoFrom).filter(validRepo))];
+    if (!list.length) { setStatus("revMsg", "Add at least one repo (owner/name or a GitHub link).", "bad"); return; }
+    $("revGo").disabled = true; revRows = [];
+    const cols = ["Assignment", "Fingerprint", "PROOF.md commit", "Commits", "Checks (re-run)", "Understanding"];
+    const draw = () => {
+      $("revTable").innerHTML = `<thead><tr><th>Repo</th><th>Result</th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${revRows.map(r => `<tr>
+        <td><a href="https://github.com/${esc(r.full)}" target="_blank" rel="noopener">${esc(r.full)}</a></td>
+        <td class="${r.error ? "n" : r.ok ? "y" : "n"}">${r.error ? "Error" : r.ok ? "✓ Verified" : "✗ Problems"}</td>
+        ${r.error ? `<td colspan="${cols.length}">${esc(r.error)}</td>` : cols.map(c => { const x = r.rows.find(y => y.label === c) || (c === "Assignment" && r.rows[0].label === "PROOF.md" ? r.rows[0] : null); return x ? `<td class="${x.ok === true ? "y" : x.ok === false ? "n" : "q"}" title="${esc(x.detail)}">${x.ok === true ? "✓" : x.ok === false ? "✗" : "–"} ${esc(x.detail)}</td>` : `<td class="q">–</td>`; }).join("")}
+      </tr>`).join("")}</tbody>`;
+    };
+    for (let i = 0; i < list.length; i++) {
+      setStatus("revMsg", `Reviewing ${list[i]} (${i + 1} of ${list.length})…`, "info");
+      try { const v = await reviewOne(list[i], a, $("revRecheck").checked); revRows.push({ full: list[i], ok: v.ok, rows: v.rows }); }
+      catch (e) { revRows.push({ full: list[i], error: e.message }); }
+      draw();
+    }
+    const good = revRows.filter(r => r.ok).length;
+    setStatus("revMsg", `${good} of ${revRows.length} verified.`, good === revRows.length ? "ok" : "bad");
+    $("revCsv").hidden = false;
+    $("revGo").disabled = false;
+  });
+  $("revCsv").addEventListener("click", async () => {
+    const q = s => `"${String(s).replace(/"/g, '""')}"`;
+    const head = ["repo", "result", "assignment", "fingerprint", "proof_commit", "commits", "checks", "understanding"];
+    const lines = [head.join(",")].concat(revRows.map(r => r.error ? [q(r.full), "error", q(r.error)].join(",") : [q(r.full), r.ok ? "verified" : "problems", ...["Assignment", "Fingerprint", "PROOF.md commit", "Commits", "Checks (re-run)", "Understanding"].map(c => { const x = r.rows.find(y => y.label === c); return q(x ? x.detail : ""); })].join(",")));
+    toast((await copyText(lines.join("\n"))) ? "Copied as CSV. Paste it into a spreadsheet." : "Couldn't copy.");
+  });
+
   // ================================================================ HISTORY
   function addHistory(entry) {
     const h = store.get("history", []);
@@ -1848,8 +2000,8 @@
       runAbort = new AbortController();
       const doCheck = async label => {
         L.run(label, "Checking it runs");
-        const r = await SteRun.check(S.m, checkOpts({ signal: runAbort.signal, onProgress: t => L.run(label, t) }));
-        S.run = { fp: C.fingerprint(S.m), ...r };
+        const r = await SteRun.check(forCheck(S.m), checkOpts({ signal: runAbort.signal, onProgress: t => L.run(label, t) }));
+        S.run = { fp: C.fingerprint(S.m), assignment: S.assignment ? S.assignment.id : null, ...r };
         return r;
       };
       check = await doCheck("check");
@@ -1962,6 +2114,8 @@
     if (outText) { $("runOut").textContent = outText; $("runSum").textContent = r.kind === "web" ? "Page console" : "Output"; }
   }
   // desktop app: Node, Go, Java, C/C++ (and Python packages the browser can't run) use the tools on this computer, after asking
+  // with an assignment open, checks run with its check files (hidden ones too)
+  const forCheck = m => S.assignment ? SteClass.withChecks(m, S.assignment) : m;
   const checkOpts = extra => ({ native: native && native.checks ? native.checks : null, project: S.m ? S.m.project : "", allowInstall: !!store.get("checksInstall", false), host: $("runHost"), ...extra });
   async function renderRuntimes() {
     $("checksInstall").checked = !!store.get("checksInstall", false);
@@ -2001,8 +2155,8 @@
       for (;;) {
         if (!r) {
           const m = S.m;
-          r = await SteRun.check(m, checkOpts({ signal, onProgress: t => setStatus("runMsg", t, "info") }));
-          S.run = { fp: C.fingerprint(m), ...r };
+          r = await SteRun.check(forCheck(m), checkOpts({ signal, onProgress: t => setStatus("runMsg", t, "info") }));
+          S.run = { fp: C.fingerprint(m), assignment: S.assignment ? S.assignment.id : null, ...r };
         }
         if (!fix || r.status !== "fail" || tries >= 3 || !aiOn() || signal.aborted) break;
         tries++;
@@ -2315,6 +2469,7 @@
     $("prOn").checked = !!store.get("prOn", false); $("prFields").hidden = !$("prOn").checked;
     renderStarters();
     renderCheckpoints();
+    try { const a = store.get("assignment", null); if (a) setAssignment(SteClass.readAssignment(a)); } catch { store.set("assignment", null); }
     setProvider(S.provider, true);
     if (S.groq.key) checkGroq(true);
     if (S.provider === "custom" && S.custom.url) checkCustom(true);

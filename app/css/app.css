@@ -378,6 +378,10 @@ ul.checklist li.ok .m { color: var(--ok); } ul.checklist li.bad .m { color: var(
 ul.checklist li .t { font-weight: 600; font-size: 14px; }
 ul.checklist li .d { grid-column: 2; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .docgrade { font-weight: 700; font-size: 15px; }
+#asgBar { margin-bottom: 18px; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.asgtitle { margin: 0; font-family: var(--display); text-transform: uppercase; font-size: 1.4rem; letter-spacing: .02em; }
+#revTable td.y { color: var(--ok); font-weight: 700; } #revTable td.n { color: var(--bad); font-weight: 700; } #revTable td.q { color: var(--muted); }
+#mkBrief, #mkReq, #mkRubric { min-height: 0; font-family: var(--body); font-size: 14px; } #mkChecks, #revRepos { min-height: 0; }
 #issBody, #issStepsText { min-height: 0; font-family: var(--body); font-size: 14px; }
 #issExplain { border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; min-height: 0; }
 

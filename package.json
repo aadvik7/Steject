@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "start": "node scripts/build-info.js && electron .",
-    "test": "node --test test/core.test.js test/starters.test.js test/safety.test.js test/checks.test.js test/doctor.test.js",
+    "test": "node --test test/core.test.js test/starters.test.js test/safety.test.js test/checks.test.js test/doctor.test.js test/classroom.test.js",
     "test:e2e": "node test/e2e.mock.js",
     "icons": "python3 scripts/make-icons.py",
     "dist": "node scripts/build-info.js && electron-builder --publish never",

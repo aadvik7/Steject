@@ -4,6 +4,7 @@ const path = require("path");
 const http = require("http");
 const fs = require("fs");
 const crypto = require("crypto");
+const os = require("os");
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(process.env.PW_PATH || "playwright")); }
 
@@ -71,7 +72,7 @@ async function gh(route) {
     return send(200, im[2] ? (issue.comments || []).map(c => ({ user: { login: "teacher" }, body: c })) : { number: +im[1], title: issue.title, body: issue.body, state: "open", comments: (issue.comments || []).length, html_url: `https://github.com/${r.owner}/${r.name}/issues/${im[1]}` });
   }
   if (rest === "/git/ref/heads/main") return r.ref ? send(200, { object: { sha: r.ref } }) : send(409, { message: "Git Repository is empty." });
-  if (rest.startsWith("/git/commits/") && m === "GET") { const c = r.commits[rest.split("/").pop()]; return c ? send(200, { sha: rest.split("/").pop(), tree: { sha: c.tree }, message: c.message }) : send(404, {}); }
+  if (rest.startsWith("/git/commits/") && m === "GET") { const c = r.commits[rest.split("/").pop()]; return c ? send(200, { sha: rest.split("/").pop(), tree: { sha: c.tree }, message: c.message, parents: (c.parents || []).map(sha => ({ sha })) }) : send(404, {}); }
   if (rest.startsWith("/git/trees/") && m === "GET") {
     const t = r.trees[rest.split("/").pop().split("?")[0]];
     return send(200, { tree: Object.keys(t).map(k => { const id = "bb" + (++blobSeq); blobIds.set(id, String(t[k] || "")); return { path: k, type: "blob", sha: id, size: String(t[k] || "").length }; }) });
@@ -604,7 +605,6 @@ async function customMock(route) {
   await page.uncheck("#prOn"); await page.click("#modeNew");
 
   // ---- 9l. open a local folder: build folders and binaries are left out
-  const os = require("os");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ste-")), projDir = path.join(dir, "MyGame");
   fs.mkdirSync(path.join(projDir, "src"), { recursive: true }); fs.mkdirSync(path.join(projDir, "node_modules", "x"), { recursive: true });
   fs.writeFileSync(path.join(projDir, "src", "game.js"), "export const go = () => 1;\n");
@@ -694,6 +694,72 @@ async function customMock(route) {
   const calcFork = repos["aadvik/calc"];
   ok(/return a \+ b/.test(calcFork.trees[calcFork.commits[calcFork.branches[issPr.head.split(":")[1]]].tree]["calc.py"]), "issue: the fork's branch has the fix");
   await page.click('nav [data-go="ship"]'); await page.uncheck("#prOn"); await page.click("#modeNew");
+
+  // ---- 9m4. Classroom: teacher makes an assignment file → student builds it → PROOF.md → teacher reviews
+  await page.click('nav [data-go="tools"]');
+  await page.click('#toolTabs [data-tool="class"]');
+  await page.click('#classTabs [data-class="create"]');
+  await page.fill("#mkTitle", "Week 3: calculator");
+  ok((await page.inputValue("#mkId")) === "week-3-calculator", "classroom: the assignment id follows the title");
+  await page.fill("#mkBrief", "Write **add(a, b)** in calc.py.");
+  await page.fill("#mkReq", "add returns the sum\nwork with negative numbers");
+  await page.fill("#mkChecks", "=== FILE: test_hidden.py ===\nfrom calc import add\n\ndef test_neg():\n    assert add(-1, -1) == -2\n=== COMMIT: Checks ===");
+  await page.uncheck("#mkVisible");
+  await page.fill("#mkRubric", "Correct | 10");
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#mkSave")]);
+  const asgPath = path.join(os.tmpdir(), "week3.steject-assignment.json");
+  await dl.saveAs(asgPath);
+  const asgJson = JSON.parse(fs.readFileSync(asgPath, "utf8"));
+  ok(asgJson.steject_assignment === 1 && asgJson.checks[0].visible === false && asgJson.checks[0].files["test_hidden.py"] && asgJson.gate.min === 0.6, "classroom: teacher downloads an assignment file with a hidden check");
+
+  await page.click('#classTabs [data-class="student"]');
+  await page.setInputFiles("#asgFile", asgPath);
+  await page.waitForSelector("#asgView:not([hidden])");
+  ok((await page.textContent("#asgBrief")).includes("add(a, b)") && (await page.textContent("#asgChecksNote")).includes("1 hidden check") && (await page.textContent("#asgRubric")).includes("10 points"), "classroom: student sees the brief, requirements, rubric and that a check is hidden");
+  await page.click("#asgStart");
+  ok((await page.isVisible("#asgBar")) && (await page.textContent("#asgBar")).includes("Week 3: calculator") && !(await page.inputValue("#manifest")).includes("test_hidden"), "classroom: the project starts; the hidden check isn't in it");
+  await page.fill("#manifest", "=== PROJECT: week3-calc ===\n=== FILE: calc.py ===\ndef add(a, b):\n    return a + b\n=== COMMIT: Add add() ===\n=== FILE: README.md ===\n# week3-calc\n=== COMMIT: Add README ===");
+  await page.waitForTimeout(300);
+  ok(await page.evaluate(() => window.SteCore.finalFiles(window.SteClass.withChecks(window.__steject.S.m, window.__steject.S.assignment)).has("test_hidden.py")), "classroom: checks run with the hidden test added");
+  pyPlan = [{ status: "pass", output: "2 passed" }];
+  await page.click("#runCheck");
+  await page.waitForFunction(() => /Tests pass/.test(document.querySelector("#runMsg").textContent), null, { timeout: 10000 });
+  ok(await page.isDisabled("#pushBtn") && (await page.textContent("#shipMsg")).includes("understanding gate"), "classroom: the assignment's 60% understanding rule is on");
+  await page.click('nav [data-go="learn"]');
+  groqPlan = [{ text: JSON.stringify({ questions: [0, 1, 2, 3, 4].map(i => ({ q: "Q" + i, options: ["right", "wrong"], answer: 0, why: "b" })) }) }];
+  await page.click("#lQuiz"); await page.waitForSelector(".q", { timeout: 8000 });
+  for (let i = 0; i < 5; i++) await page.click(`.q[data-q="${i}"] button[data-o="${i < 4 ? 0 : 1}"]`);
+  await page.click('nav [data-go="ship"]');
+  ok(await page.isChecked("#proofOn") && !(await page.isDisabled("#pushBtn")), "classroom: after the quiz, push is allowed and PROOF.md is ticked");
+  await page.click("#pushBtn");
+  await page.waitForSelector("#doneBox:not([hidden])", { timeout: 15000 });
+  const sub = repos["aadvik/week3-calc"], subHist = hist(sub);
+  const proofMd = treeOf(sub)["PROOF.md"];
+  ok(sub.commits[subHist[0]].message === "Add PROOF.md" && sub.commits[subHist[0]].parents[0] === subHist[1] && !("test_hidden.py" in treeOf(sub)), "classroom: PROOF.md is its own commit right after the work; the hidden test stays out of the repo");
+  const proofData = JSON.parse(proofMd.match(/<!-- steject-proof (\{.*\}) -->/)[1]);
+  ok(proofData.work_commit === subHist[1] && proofData.check.status === "pass" && proofData.understanding.score === 4 && proofData.commits.length === 2 && /self-reported/.test(proofMd), "classroom: PROOF.md lists the commits, the check result and the (self-reported) score");
+  ok(proofData.fingerprint === require("crypto").createHash("sha256").update(`steject-proof:week-3-calculator:${subHist[1]}`).digest("hex"), "classroom: the fingerprint is SHA-256 of the assignment id and the work commit");
+
+  // teacher reviews two repos: one good, one without PROOF.md
+  await page.click('nav [data-go="tools"]'); await page.click('#toolTabs [data-tool="class"]');
+  await page.click('#classTabs [data-class="review"]');
+  await page.setInputFiles("#revFile", asgPath);
+  await page.fill("#revRepos", "https://github.com/aadvik/week3-calc\naadvik/busy-app");
+  pyPlan = [{ status: "pass", output: "2 passed" }];
+  await page.click("#revGo");
+  await page.waitForFunction(() => /of 2 verified/.test(document.querySelector("#revMsg").textContent), null, { timeout: 20000 });
+  const revText = await page.textContent("#revTable");
+  ok(/week3-calc✓Verified/.test(revText.replace(/\s+/g, "")) && (await page.textContent("#revMsg")).includes("1 of 2 verified"), "review: the real submission verifies (fingerprint, commits, checks re-run)");
+  ok(revText.includes("No PROOF.md"), "review: a repo without PROOF.md is flagged");
+  // a commit added after PROOF.md is caught
+  const extra = "e".repeat(40); sub.commits[extra] = { tree: sub.commits[sub.ref].tree, parents: [sub.ref], message: "Sneaky change" }; sub.ref = extra;
+  await page.fill("#revRepos", "aadvik/week3-calc");
+  pyPlan = [{ status: "pass" }];
+  await page.click("#revGo");
+  await page.waitForFunction(() => /of 1 verified/.test(document.querySelector("#revMsg").textContent), null, { timeout: 20000 });
+  ok((await page.textContent("#revTable")).includes("wasn't added right after"), "review: changes after PROOF.md are caught");
+  await page.click('nav [data-go="ship"]'); await page.click("#asgLeave");
+  await page.click('nav [data-go="learn"]'); await page.uncheck("#gateOn"); await page.click('nav [data-go="ship"]');
 
   // ---- 9n. Learn through Groq, then remove the key
   await page.fill("#manifest", good);

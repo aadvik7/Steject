@@ -37,6 +37,7 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **Open an existing project:** a local folder or a GitHub repo, to explain, improve or extend it.
 - **Pull requests:** push to a new branch and open a PR instead of writing to main. For repos you can't push to, STEJECT uses your fork.
 - **Issue → pull request:** paste a GitHub issue link; STEJECT explains the code involved in plain words, proposes a plan you approve, writes and checks the change, asks you three questions about it, then opens a pull request (from your fork if needed) with a plain-words description.
+- **Classroom, no server:** a teacher shares an assignment file (brief, requirements, starter files, visible or hidden checks, rubric); STEJECT adds a PROOF.md to each student's repo (commits, check results, understanding score, a SHA-256 fingerprint), and the teacher's Review screen verifies every PROOF.md against the real commits and re-runs the checks, for the whole class in one table.
 - **Repo doctor:** a score out of 100 and a plain-words checklist for any GitHub repo (README, license, .gitignore and committed junk, tests, CI, big files, leaked secrets, old dependencies, structure), and **Fix it** turns the gaps into a reviewable pull request.
 - **Repo polish pack:** LICENSE, .gitignore, issue templates, a CI workflow, and AGENTS.md + CLAUDE.md for AI coding tools.
 - **AI helper, your choice:**

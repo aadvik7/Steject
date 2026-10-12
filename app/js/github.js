@@ -182,12 +182,22 @@
       if (tree.sha === ctx.prevTree) { log.update(id, "skip", `Commit ${i + 1}/${total}: ${c.message} (files already match, skipped)`); ctx.next = i + 1; continue; }
       const commit = await retry(() => req(`${base}/git/commits`, { method: "POST", body: { message: c.message, tree: tree.sha, parents: ctx.parent ? [ctx.parent] : [] } }));
       ctx.parent = commit.sha; ctx.prevTree = tree.sha; ctx.next = i + 1; ctx.made.push(commit.sha);
+      (ctx.madeInfo = ctx.madeInfo || []).push({ sha: commit.sha, message: c.message });
       c.files.forEach((v, p) => { if (v === null) ctx.paths.delete(p); else ctx.paths.add(p); });
       log.update(id, "ok", `Commit ${i + 1}/${total}: ${c.message}  ${commit.sha.slice(0, 7)}`);
     }
 
     if (!ctx.made.length) {
       return { status: "done", url: ctx.url, full: ctx.full, commits: 0, nothing: true };
+    }
+    // classroom: PROOF.md goes in one more commit, right after the work it describes
+    if (job.proof && !ctx.proofDone) {
+      log.run("proof", "Adding PROOF.md");
+      const text = await job.proof({ workSha: ctx.parent, commits: (ctx.madeInfo || []).slice() });
+      const tree = await retry(() => req(`${base}/git/trees`, { method: "POST", body: { base_tree: ctx.prevTree, tree: [{ path: "PROOF.md", mode: "100644", type: "blob", content: text }] } }));
+      const commit = await retry(() => req(`${base}/git/commits`, { method: "POST", body: { message: "Add PROOF.md", tree: tree.sha, parents: [ctx.parent] } }));
+      ctx.parent = commit.sha; ctx.prevTree = tree.sha; ctx.made.push(commit.sha); ctx.proofDone = true;
+      log.update("proof", "ok", `PROOF.md added  ${commit.sha.slice(0, 7)}`);
     }
     // pull request mode: the commits go to a new branch, and main is left alone
     if (job.pr && job.mode === "update") {
@@ -314,7 +324,18 @@
     return { number: i.number, title: i.title, body: i.body || "", state: i.state, url: i.html_url, comments };
   }
 
-  const api = { GhError, me, listRepos, repoState, readFile, ship, importRepo, undoPush, pushTarget, getIssue, b64, unb64 };
+  /** One commit: {sha, parents: [sha], message} */
+  async function commitInfo(token, full, sha) {
+    const c = await client(token).req(`/repos/${full}/git/commits/${sha}`);
+    return { sha: c.sha || sha, parents: (c.parents || []).map(p => p.sha || p), message: c.message };
+  }
+  /** Commit SHAs reachable from `sha`, newest first (up to n). */
+  async function history(token, full, sha, n) {
+    const list = await client(token).req(`/repos/${full}/commits?sha=${encodeURIComponent(sha)}&per_page=${n || 100}`);
+    return (list || []).map(c => c.sha);
+  }
+
+  const api = { GhError, me, listRepos, repoState, readFile, ship, importRepo, undoPush, pushTarget, getIssue, commitInfo, history, b64, unb64 };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.SteGitHub = api;
 })(typeof self !== "undefined" ? self : this);

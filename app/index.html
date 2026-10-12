@@ -48,6 +48,7 @@
     <div class="flow" aria-label="How it works"><b>paste</b><i>→</i><b>check</b><i>→</i><b>inspect</b><i>→</i><b>push</b><i>→</i><b>alert</b></div>
   </div>
 
+  <div class="callout info" id="asgBar" hidden></div>
   <div class="grid">
     <!-- 1. PASTE -->
     <section class="panel paste" aria-labelledby="h-paste">
@@ -228,6 +229,7 @@
       <label class="override" id="overrideRow" hidden><input id="override" type="checkbox"> I checked the safety warnings in Inspect and want to push anyway.</label>
 
       <div class="callout" id="gateBox" hidden></div>
+      <label class="cb" id="proofRow" hidden><input id="proofOn" type="checkbox" checked> <span id="proofText">Add PROOF.md for the assignment</span></label>
 
       <div id="paneGh" class="pushcols">
         <div class="acct off" id="acctBox">
@@ -385,7 +387,50 @@
       <div class="row"><button class="btn primary" id="issPr" type="button">Open the pull request</button><span class="status" id="issPrMsg" role="status"></span></div>
     </div>
   </section>
-  <section class="panel tool" id="tool-class" hidden></section>
+  <section class="panel tool" id="tool-class" hidden>
+    <h2 class="k">Classroom</h2>
+    <p class="note">No server and no accounts: a teacher shares an <b>assignment file</b>, students build the project in STEJECT, and STEJECT adds a <b>PROOF.md</b> to their repo. The teacher's <b>Review</b> checks each PROOF.md against the real commits and re-runs the checks.</p>
+    <div class="seg" role="group" aria-label="Classroom" id="classTabs">
+      <button type="button" data-class="student" aria-pressed="true">I'm a student</button>
+      <button type="button" data-class="create" aria-pressed="false">Create an assignment</button>
+      <button type="button" data-class="review" aria-pressed="false">Review submissions</button>
+    </div>
+
+    <div class="stack" id="class-student">
+      <div class="row"><label class="btn filebtn">Open an assignment file<input id="asgFile" type="file" accept=".json,application/json"></label><span class="status" id="asgMsg" role="status"></span></div>
+      <div class="stack" id="asgView" hidden>
+        <h3 class="asgtitle" id="asgTitle"></h3>
+        <div class="prose" id="asgBrief"></div>
+        <div id="asgReq"></div>
+        <div id="asgRubric"></div>
+        <p class="note" id="asgChecksNote"></p>
+        <div class="row"><button class="btn primary" id="asgStart" type="button">Start the project</button></div>
+      </div>
+    </div>
+
+    <div class="stack" id="class-create" hidden>
+      <div class="row">
+        <label class="f" for="mkTitle">Title<input id="mkTitle" type="text" placeholder="Week 3: a calculator"></label>
+        <label class="f" for="mkId">Assignment id <small>letters, numbers, - _ .</small><input id="mkId" type="text" placeholder="cs101-week3" spellcheck="false"></label>
+      </div>
+      <label class="f" for="mkBrief">Brief <small>what to build; Markdown is fine</small><textarea id="mkBrief" rows="4"></textarea></label>
+      <label class="f" for="mkReq">Requirements <small>one per line</small><textarea id="mkReq" rows="3"></textarea></label>
+      <label class="cb"><input id="mkStarter" type="checkbox"> <span>Use the project on the Ship page as the <b>starter files</b></span></label>
+      <label class="f" for="mkChecks">Checks <small>test files in STEJECT's manifest format (=== FILE: test_x.py ===). Python tests run with pytest; a web project's index.html is opened and checked for errors.</small><textarea id="mkChecks" rows="5" spellcheck="false" placeholder="=== FILE: test_calc.py ===&#10;from calc import add&#10;&#10;def test_add():&#10;    assert add(2, 3) == 5&#10;=== COMMIT: Checks ==="></textarea></label>
+      <label class="cb"><input id="mkVisible" type="checkbox" checked> <span>Students can see the checks (they're added to the project). Unticked, they're <b>hidden</b>: left out of the project and the repo, and only run when checking. They're still inside the assignment file, so a determined student could read them.</span></label>
+      <label class="f" for="mkRubric">Rubric <small>optional; one per line as "criterion | points"</small><textarea id="mkRubric" rows="3" placeholder="Correct results | 10&#10;Readable code | 5"></textarea></label>
+      <label class="f" for="mkGate">Understanding needed<select id="mkGate"><option value="0">None</option><option value="0.6" selected>60% on the quiz or mock interview</option><option value="0.8">80%</option></select></label>
+      <div class="row"><button class="btn primary" id="mkSave" type="button">Download the assignment file</button><span class="status" id="mkMsg" role="status"></span></div>
+    </div>
+
+    <div class="stack" id="class-review" hidden>
+      <div class="row"><label class="btn filebtn">Assignment file<input id="revFile" type="file" accept=".json,application/json"></label><span class="status" id="revAsg" role="status"></span></div>
+      <label class="f" for="revRepos">Student repos <small>one per line: owner/name or a GitHub link</small><textarea id="revRepos" rows="5" spellcheck="false"></textarea></label>
+      <label class="cb"><input id="revRecheck" type="checkbox" checked> <span>Re-run the checks on each repo (Python and web pages in the browser; other languages need the desktop app)</span></label>
+      <div class="row"><button class="btn primary" id="revGo" type="button">Review</button><button class="btn" id="revCsv" type="button" hidden>Copy as CSV</button><span class="status" id="revMsg" role="status"></span></div>
+      <div class="tablewrap"><table class="hist" id="revTable"></table></div>
+    </div>
+  </section>
 </main>
 
 <!-- ================================================================== HISTORY -->
@@ -568,6 +613,7 @@
 <script src="js/core.js"></script>
 <script src="js/safety.js"></script>
 <script src="js/doctor.js"></script>
+<script src="js/classroom.js"></script>
 <script src="js/github.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/webai.js"></script>
