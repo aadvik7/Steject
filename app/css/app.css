@@ -378,6 +378,8 @@ ul.checklist li.ok .m { color: var(--ok); } ul.checklist li.bad .m { color: var(
 ul.checklist li .t { font-weight: 600; font-size: 14px; }
 ul.checklist li .d { grid-column: 2; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .docgrade { font-weight: 700; font-size: 15px; }
+#issBody, #issStepsText { min-height: 0; font-family: var(--body); font-size: 14px; }
+#issExplain { border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; min-height: 0; }
 
 /* ---------------------------------------------------------------- 1.3: desktop checks */
 ul.rtlist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 12px; }

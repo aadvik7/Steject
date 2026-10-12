@@ -1102,6 +1102,187 @@
     finally { $("docWrite").disabled = false; }
   });
 
+  // ---------------- Issue → pull request
+  let iss = null;   // {full, number, issue, read, explanation, plan, before, check, quizPassed}
+  let issLog = null;
+  function issueFrom(url) {
+    const m = String(url || "").trim().match(/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/issues\/(\d+)/i) || String(url || "").trim().match(/^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)#(\d+)$/);
+    return m ? { full: `${m[1]}/${m[2].replace(/\.git$/, "")}`, number: +m[3] } : null;
+  }
+  const issBusy = on => { $("issGo").disabled = on; $("issStop").hidden = !on; $("issApprove").disabled = on; $("issPr").disabled = on; };
+  $("issStop").addEventListener("click", () => { aiAbort && aiAbort.abort(); runAbort && runAbort.abort(); });
+  $("issUrl").addEventListener("keydown", e => { if (e.key === "Enter") $("issGo").click(); });
+  $("issGo").addEventListener("click", async () => {
+    const ref = issueFrom($("issUrl").value);
+    if (!ref) { setStatus("issMsg", "Paste an issue link like https://github.com/owner/repo/issues/12 (or owner/repo#12).", "bad"); return; }
+    if (!aiOn()) { setStatus("issMsg", "Set up an AI helper in Settings first.", "bad"); return; }
+    if (!S.gh.login) { setStatus("issMsg", "Connect GitHub in Settings first, so the pull request can be opened.", "bad"); return; }
+    ["issIssue", "issExplain", "issPlanBox", "issQuiz", "issPrBox"].forEach(id => { $(id).hidden = true; });
+    setStatus("issMsg", "");
+    issBusy(true);
+    issLog = makeLog("issLog");
+    try {
+      issLog.run("read", `Reading issue #${ref.number} and the repo`);
+      const issue = await G.getIssue(S.gh.token, ref.full, ref.number);
+      const read = await G.importRepo(S.gh.token, ref.full, { onProgress: (n, t) => issLog.run("read", `Reading the repo… ${n} of ${t} files`) });
+      if (!read.head) throw new Error("That repo is empty.");
+      iss = { ...ref, full: read.full, issue, read };
+      $("issIssue").innerHTML = `<span><b>#${issue.number}: ${esc(issue.title)}</b>${issue.state !== "open" ? " (closed)" : ""}</span><span>${esc(issue.body.slice(0, 600) || "No description.")}${issue.body.length > 600 ? "…" : ""}</span>`;
+      $("issIssue").hidden = false;
+      issLog.update("read", "ok", `Read issue #${issue.number} and ${plural(read.files.size, "file")} from ${read.full}`);
+
+      issLog.run("explain", "Explaining the code involved");
+      $("issExplain").hidden = false; $("issExplain").innerHTML = `<p class="thinking">Reading the code…</p>`;
+      const digest = C.digest(C.manifestFromFiles(read.files, read.full.split("/")[1]), codeBudget());
+      iss.explanation = await aiRun(signal => llm().chat(aiModel(), AI.prompts.issueExplain(issue, digest), { signal, temperature: 0.3, maxTokens: 1500, onWait: waitNote("issMsg"),
+        onText: t => { $("issExplain").innerHTML = md(t); } }));
+      $("issExplain").innerHTML = md(iss.explanation);
+      issLog.update("explain", "ok", "Explained in plain words (below)");
+
+      issLog.run("plan", "Planning the change");
+      const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.issuePlan(issue, iss.explanation, digest), { signal, json: true, temperature: 0.2, maxTokens: 1200, onWait: waitNote("issMsg") }));
+      const p = C.extractJson(out);
+      const plan = { summary: String(p.summary || "").slice(0, 300), steps: (Array.isArray(p.steps) ? p.steps : []).map(String).slice(0, 12), files: (Array.isArray(p.files) ? p.files : []).filter(f => f && f.path).slice(0, 15).map(f => ({ path: String(f.path), change: String(f.change || "") })) };
+      if (!plan.files.length) throw new Error("The AI's plan didn't name any files to change. Try again, or add details to the issue.");
+      $("issSummary").value = plan.summary;
+      $("issStepsText").value = plan.steps.join("\n");
+      $("issFiles").innerHTML = plan.files.map((f, i) => `<label class="cb"><input type="checkbox" data-issfile="${i}" checked> <span><code>${esc(f.path)}</code>${read.files.has(f.path) ? "" : " (new file)"} · <input class="issChange" data-i="${i}" type="text" value="${esc(f.change)}" aria-label="What to change in ${esc(f.path)}"></span></label>`).join("");
+      iss.plan = plan;
+      $("issPlanBox").hidden = false;
+      issLog.update("plan", "ok", "Plan ready");
+      issLog.run("approve", "Waiting for you: read the plan, edit it, then approve");
+    } catch (e) {
+      issLog.fail(e.name === "AbortError" ? "Stopped." : e.status === 404 ? "Couldn't find that issue or repo. Check the link; private repos need GitHub connected." : e.message);
+    } finally { issBusy(false); }
+  });
+
+  $("issApprove").addEventListener("click", async () => {
+    if (!iss || !iss.plan) return;
+    const files = $$("[data-issfile]").filter(c => c.checked).map(c => ({ path: iss.plan.files[+c.dataset.issfile].path, change: $$(".issChange")[+c.dataset.issfile].value.trim() }));
+    if (!files.length) { setStatus("issMsg", "Keep at least one file in the plan.", "bad"); return; }
+    const plan = { summary: $("issSummary").value.trim() || iss.plan.summary, steps: $("issStepsText").value.split("\n").map(s => s.trim()).filter(Boolean), files };
+    iss.plan = plan;
+    $("issPlanBox").hidden = true;
+    issBusy(true);
+    try {
+      issLog.update("approve", "ok", "Plan approved");
+      // the project goes to the Ship page, so the change can be read there like any other
+      openProject(iss.read.files, iss.full.split("/")[1], "github", iss.read.skipped);
+      iss.before = C.finalFiles(S.m);
+      issLog.run("write", "Writing the change");
+      const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.issueWrite(iss.issue, plan, C.digest(S.m, codeBudget())), { signal, temperature: 0.2, maxTokens: 6000, onWait: waitNote("issMsg"),
+        onText: t => issLog.run("write", `Writing the change… ${t.length.toLocaleString()} characters`) }));
+      let change;
+      try { change = C.parse(cleanFence(out)); } catch (e) { throw new Error("The AI's change wasn't in the right format (" + e.message + "). Click Start to try again."); }
+      setText(C.serialize(C.applyChanges(S.m, change)), true, iss.before, `Before the fix for issue #${iss.number}`);
+      const ch = C.changedPaths(iss.before, C.finalFiles(S.m));
+      issLog.update("write", "ok", `Change written: ${describeChange(ch)} (see Ship → Inspect)`);
+
+      issLog.run("check", "Checking it runs");
+      runAbort = new AbortController();
+      const r = await SteRun.check(S.m, checkOpts({ signal: runAbort.signal, onProgress: t => issLog.run("check", t) }));
+      runAbort = null;
+      S.run = { fp: C.fingerprint(S.m), ...r };
+      iss.check = r.status === "pass" ? `Passed: ${r.summary}` : r.status === "fail" ? `Failed: ${r.summary}` : `Not checked: ${r.detail || r.summary}`;
+      issLog.update("check", r.status === "pass" ? "ok" : r.status === "fail" ? "bad" : "skip", iss.check + (r.status === "fail" ? ". Fix it on the Ship page (Fix with AI), or describe the failure in the pull request." : ""));
+
+      issLog.run("quiz", "Your turn: three questions about the change");
+      iss.diff = C.changeDiff(iss.before, C.finalFiles(S.m), 8000);
+      const qraw = await aiRun(signal => llm().chat(aiModel(), AI.prompts.changeQuiz(iss.issue, iss.diff), { signal, json: true, temperature: 0.3, maxTokens: 1500 }));
+      let qs = C.extractJson(qraw);
+      qs = (Array.isArray(qs) ? qs : qs.questions || []).filter(q => q && q.q && Array.isArray(q.options) && q.options.length >= 2 && Number.isInteger(+q.answer) && +q.answer < q.options.length).slice(0, 3);
+      if (!qs.length) throw new Error("The AI didn't return usable questions. Click Start to try again.");
+      renderIssQuiz(qs);
+    } catch (e) {
+      runAbort = null;
+      issLog.fail(e.name === "AbortError" ? "Stopped." : e.message);
+    } finally { issBusy(false); }
+  });
+
+  function renderIssQuiz(qs) {
+    const need = Math.min(2, qs.length), fp = C.fingerprint(S.m);
+    let answered = 0, right = 0;
+    $("issQuiz").innerHTML = `<p class="note">Answer these before the pull request opens: a reviewer will expect you to explain your change. You need ${need} of ${qs.length}.</p><div class="quiz">${qs.map((q, i) => `
+      <div class="q" data-q="${i}"><span class="qt">${esc(q.q)}</span>
+        <div class="opts">${q.options.map((o, j) => `<button type="button" data-o="${j}">${esc(String(o))}</button>`).join("")}</div>
+        <span class="why" hidden>${esc(q.why || "")}</span></div>`).join("")}</div><div class="row" id="issScore" hidden></div>`;
+    $("issQuiz").hidden = false;
+    $("issQuiz").querySelectorAll(".q").forEach(el => el.addEventListener("click", e => {
+      const b = e.target.closest("button[data-o]"); if (!b) return;
+      const q = qs[+el.dataset.q], pick = +b.dataset.o, ans = +q.answer;
+      el.querySelectorAll("button").forEach((x, j) => { x.disabled = true; if (j === ans) x.classList.add("right"); else if (j === pick) x.classList.add("wrong"); });
+      el.querySelector(".why").hidden = !q.why;
+      answered++; if (pick === ans) right++;
+      if (answered < qs.length) return;
+      recordUnderstanding(fp, "quiz", right, qs.length);
+      const ok = right >= need;
+      $("issScore").hidden = false;
+      $("issScore").innerHTML = `<span class="score">${right}/${qs.length}</span><span class="note">${ok ? "You can explain your change. Now open the pull request." : "Not yet. Read the explanation and the change on the Ship page, then answer new questions."}</span>${ok ? "" : `<button class="btn small" type="button" id="issRetry">New questions</button>`}`;
+      issLog.update("quiz", ok ? "ok" : "bad", `Answered ${right} of ${qs.length} correctly`);
+      if (ok) { iss.quizPassed = true; showIssPr(); }
+    }));
+  }
+  $("issQuiz").addEventListener("click", async e => {
+    if (!e.target.closest("#issRetry")) return;
+    issBusy(true);
+    try {
+      const qraw = await aiRun(signal => llm().chat(aiModel(), AI.prompts.changeQuiz(iss.issue, iss.diff), { signal, json: true, temperature: 0.7, maxTokens: 1500 }));
+      let qs = C.extractJson(qraw);
+      qs = (Array.isArray(qs) ? qs : qs.questions || []).filter(q => q && q.q && Array.isArray(q.options) && q.options.length >= 2 && Number.isInteger(+q.answer) && +q.answer < q.options.length).slice(0, 3);
+      if (qs.length) renderIssQuiz(qs);
+    } catch (err) { setStatus("issMsg", err.message, "bad"); } finally { issBusy(false); }
+  });
+
+  async function showIssPr() {
+    issLog.run("pr", "Writing the pull request description");
+    $("issBranch").value = (`steject/issue-${iss.number}-` + C.slug(iss.issue.title)).slice(0, 60).replace(/[.-]+$/, "");
+    $("issTitle").value = `Fix #${iss.number}: ${iss.issue.title}`.slice(0, 120);
+    let body;
+    try {
+      body = await aiRun(signal => llm().chat(aiModel(), AI.prompts.prBody(iss.issue, iss.plan, iss.diff, iss.check), { signal, temperature: 0.3, maxTokens: 700 }));
+      body = cleanFence(body);
+    } catch { body = ""; }
+    if (!/Fixes #\d+/.test(body)) body = `## What this changes\n${iss.plan.summary}\n\n## Why\n${iss.issue.title}\n\n## How it was checked\n${iss.check}\n\nFixes #${iss.number}`;
+    $("issBody").value = body.trim() + "\n\n_Opened with [STEJECT](https://github.com/aadvik7/Steject). The author answered questions about this change before opening it._\n";
+    $("issPrBox").hidden = false;
+    issLog.update("pr", "ok", "Description ready: check it, then open the pull request");
+  }
+
+  $("issPr").addEventListener("click", async () => {
+    if (!iss || !iss.quizPassed) { setStatus("issPrMsg", "Answer the questions about the change first.", "bad"); return; }
+    const branch = $("issBranch").value.trim();
+    if (!validBranch(branch)) { setStatus("issPrMsg", "Branch names use letters, numbers, - _ . and /.", "bad"); return; }
+    issBusy(true);
+    setStatus("issPrMsg", "Getting the push ready…", "info");
+    try {
+      await prepareRepoPush(iss.full);
+      await new Promise(r => setTimeout(r, 50));
+      await waitFor(() => $("repoPick").value && S.target && !S.target.loading, 15000);
+      $("prOn").checked = true; $("prFields").hidden = false;
+      $("prBranch").value = branch; $("prBranch").dataset.touched = "1";
+      $("prTitle").value = $("issTitle").value.trim(); $("prTitle").dataset.touched = "1";
+      S.prBody = $("issBody").value;
+      updateShip();
+      setStatus("issPrMsg", "Opening the pull request…", "info");
+      const r = await doPush();
+      S.prBody = null;
+      if (!r || r.error || !r.pr) throw new Error(r && r.error ? r.error.message : "The push didn't open a pull request. See the log on the Ship page.");
+      issLog.run("done", "");
+      issLog.update("done", "ok", `Pull request #${r.pr.number} opened`);
+      $("issPrMsg").className = "status ok";
+      $("issPrMsg").innerHTML = `Pull request opened: <a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url.replace(/^https:\/\//, ""))}</a>`;
+    } catch (e) {
+      S.prBody = null;
+      setStatus("issPrMsg", e.message, "bad");
+    } finally { issBusy(false); }
+  });
+  function waitFor(test, ms) {
+    return new Promise((res, rej) => {
+      const t0 = Date.now();
+      (function poll() { if (test()) return res(); if (Date.now() - t0 > ms) return rej(new Error("GitHub took too long to answer. Try again.")); setTimeout(poll, 100); })();
+    });
+  }
+
   // ================================================================ HISTORY
   function addHistory(entry) {
     const h = store.get("history", []);

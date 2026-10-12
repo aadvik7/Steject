@@ -653,6 +653,48 @@ async function customMock(route) {
   ok(!(".env" in forkTree) && !("node_modules/x/index.js" in forkTree) && /\.env/.test(forkTree[".gitignore"]) && "LICENSE" in forkTree && "test_main.py" in forkTree, "doctor: committed junk removed and ignored; license and tests added");
   await page.uncheck("#prOn"); await page.click("#modeNew");
 
+  // ---- 9m3. Issue → pull request: read, explain, plan (approved), write, check, questions (the gate), PR from a fork
+  const calcRepo = mkRepo("someone/calc", { "calc.py": "def add(a, b):\n    return a - b\n", "test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n", "README.md": "# calc\n" }, 1);
+  calcRepo.issues = { 7: { title: "add() gives the wrong answer", body: "add(2, 3) returns -1 instead of 5.", comments: ["Seen on Python 3.12 too."] } };
+  const q3 = right => ({ text: JSON.stringify({ questions: [0, 1, 2].map(i => ({ q: "Why does the fix work? " + i, options: ["right", "wrong"], answer: 0, why: "because" })) }) });
+  groqCalls = []; pyRuns = 0;
+  groqPlan = [
+    { text: "## What the issue asks\nadd() subtracts.\n## Where in the code\n`calc.py`: `return a - b`\n## Likely cause\nA minus sign." },
+    { text: JSON.stringify({ summary: "Make add() add", steps: ["Change - to + in add()"], files: [{ path: "calc.py", change: "use +" }, { path: "notes.txt", change: "not needed" }] }) },
+    { text: "=== FILE: calc.py ===\ndef add(a, b):\n    return a + b\n=== COMMIT: Make add() add (#7) ===" },
+    q3(), q3(),
+    { text: "## What this changes\nadd() now adds.\n## Why\nIt subtracted.\n## How it was checked\nTests pass.\n\nFixes #7" },
+  ];
+  pyPlan = [{ status: "pass", output: "1 passed" }];
+  await page.click('nav [data-go="tools"]');
+  await page.click('#toolTabs [data-tool="issue"]');
+  await page.fill("#issUrl", "https://github.com/someone/calc/issues/7");
+  await page.click("#issGo");
+  await page.waitForSelector("#issPlanBox:not([hidden])", { timeout: 10000 });
+  ok((await page.textContent("#issIssue")).includes("add() gives the wrong answer") && (await page.textContent("#issExplain")).includes("Likely cause"), "issue: reads the issue and explains the code in plain words");
+  ok(/Seen on Python 3\.12/.test(groqCalls[0].messages[1].content) && /--- calc\.py ---/.test(groqCalls[0].messages[1].content), "issue: the explanation sees the issue, its comments and the code");
+  ok((await page.$$("[data-issfile]")).length === 2 && (await page.textContent("#issLog")).includes("Waiting for you"), "issue: proposes a plan and waits for approval");
+  await page.uncheck('[data-issfile="1"]');
+  await page.click("#issApprove");
+  await page.waitForSelector("#issQuiz:not([hidden])", { timeout: 15000 });
+  ok(!/notes\.txt/.test(groqCalls[2].messages[1].content) && /Change - to \+/.test(groqCalls[2].messages[1].content), "issue: the change follows the approved plan");
+  ok((await page.textContent("#issLog")).includes("Passed: Tests pass") && await page.evaluate(() => window.__steject.S.m.commits.at(-1).message) === "Make add() add (#7)", "issue: change written as a new commit, then checked");
+  ok(/-\s+return a - b\n\+\s+return a \+ b/.test(groqCalls[3].messages[1].content), "issue: the questions are about the actual change (diff)");
+  for (let i = 0; i < 3; i++) await page.click(`#issQuiz .q[data-q="${i}"] button[data-o="${i === 0 ? 0 : 1}"]`);
+  ok((await page.textContent("#issScore")).includes("1/3") && await page.isHidden("#issPrBox"), "issue: 1 of 3 isn't enough; no pull request yet");
+  await page.click("#issRetry");
+  await page.waitForFunction(() => document.querySelectorAll("#issQuiz .q button:not([disabled])").length === 6, null, { timeout: 8000 });
+  for (let i = 0; i < 3; i++) await page.click(`#issQuiz .q[data-q="${i}"] button[data-o="0"]`);
+  await page.waitForSelector("#issPrBox:not([hidden])", { timeout: 8000 });
+  ok((await page.inputValue("#issBody")).includes("Fixes #7") && (await page.inputValue("#issBranch")).startsWith("steject/issue-7-") && (await page.inputValue("#issTitle")) === "Fix #7: add() gives the wrong answer", "issue: plain-words PR description, branch and title");
+  await page.click("#issPr");
+  await page.waitForFunction(() => /Pull request opened/.test(document.querySelector("#issPrMsg").textContent) || /bad/.test(document.querySelector("#issPrMsg").className), null, { timeout: 20000 });
+  const issPr = prs[prs.length - 1];
+  ok((await page.textContent("#issPrMsg")).includes("Pull request opened") && issPr.head.startsWith("aadvik:steject/issue-7-") && /someone\/calc\/pull/.test(issPr.html_url) && /Fixes #7/.test(issPr.body), "issue: pull request opened from your fork into the original repo");
+  const calcFork = repos["aadvik/calc"];
+  ok(/return a \+ b/.test(calcFork.trees[calcFork.commits[calcFork.branches[issPr.head.split(":")[1]]].tree]["calc.py"]), "issue: the fork's branch has the fix");
+  await page.click('nav [data-go="ship"]'); await page.uncheck("#prOn"); await page.click("#modeNew");
+
   // ---- 9n. Learn through Groq, then remove the key
   await page.fill("#manifest", good);
   await page.waitForTimeout(300);

@@ -120,6 +120,18 @@ Type any GitHub repo (`owner/name` or its link) and click **Check it**. STEJECT 
 
 **Fix it** shows a plan of the fixes; untick what you don't want and click **Approve and write the fixes**. LICENSE, .gitignore and CI are added directly; the README and tests are written by your AI helper; committed junk is removed from the repo (not from anyone's computer) and added to .gitignore. The fixes open on the Ship page as commits for you to read, ready to push as a **pull request**. If it isn't your repo, STEJECT makes your own copy (a *fork*) and opens the pull request from there.
 
+## Fix a GitHub issue (Tools → Issue → pull request)
+
+Needs an AI helper and GitHub connected. Paste an issue link (`https://github.com/owner/repo/issues/12`, or `owner/repo#12`) and click **Start**:
+
+1. **Read:** STEJECT reads the issue, its comments and the repo's text files.
+2. **Explain:** your AI helper explains, in plain words, what the issue asks, where in the code it happens, and the likely cause.
+3. **Plan:** it proposes the smallest change: a summary, steps and the files to touch. Edit anything, untick files, then **Approve**.
+4. **Write:** only the changed files come back, as a new commit you can read on the Ship page.
+5. **Check:** STEJECT checks it runs (Python and web in the app; other languages on the desktop with your approval).
+6. **Your turn:** three questions about *this change*. You need 2 of 3. If you miss, read the change and ask for new questions.
+7. **Pull request:** a plain-words description (what changes, why, how it was checked, and `Fixes #12` so the issue closes when it's merged). Edit it, then **Open the pull request**. If you can't push to the repo, STEJECT makes your fork and opens the pull request from there.
+
 ## 4. If a push fails
 
 Nothing on GitHub changes until the very last step, so a failed push never leaves a half-updated branch. Click **Resume push** to continue from the commit that failed.

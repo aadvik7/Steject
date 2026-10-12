@@ -359,7 +359,32 @@
     </div>
   </section>
 
-  <section class="panel tool" id="tool-issue" hidden></section>
+  <section class="panel tool" id="tool-issue" hidden>
+    <h2 class="k">Issue → pull request</h2>
+    <p class="note">Paste a GitHub issue link. STEJECT reads the repo, explains the code involved in plain words, proposes a plan you approve, writes the change, checks it, asks you three questions about it, and then opens a pull request. Needs an AI helper and GitHub connected.</p>
+    <div class="row nowrap"><input id="issUrl" type="text" placeholder="https://github.com/owner/repo/issues/12" autocomplete="off" spellcheck="false" aria-label="Issue link"><button class="btn primary" id="issGo" type="button">Start</button><button class="btn" id="issStop" type="button" hidden>Stop</button></div>
+    <p class="status" id="issMsg" role="status"></p>
+    <ul class="log" id="issLog" hidden aria-live="polite"></ul>
+    <div class="callout info" id="issIssue" hidden></div>
+    <div class="out prose" id="issExplain" hidden></div>
+    <div class="planbox" id="issPlanBox" hidden>
+      <h3 class="k">The plan · edit it, then approve</h3>
+      <label class="f" for="issSummary">In one sentence<input id="issSummary" type="text" autocomplete="off"></label>
+      <label class="f" for="issStepsText">Steps <small>one per line</small><textarea id="issStepsText" rows="4"></textarea></label>
+      <div class="stack" id="issFiles"></div>
+      <div class="row"><button class="btn ai" id="issApprove" type="button">Approve the plan and write the change</button></div>
+    </div>
+    <div class="stack" id="issQuiz" hidden></div>
+    <div class="planbox" id="issPrBox" hidden>
+      <h3 class="k">Pull request</h3>
+      <div class="row">
+        <label class="f" for="issBranch">Branch<input id="issBranch" type="text" autocomplete="off" spellcheck="false"></label>
+        <label class="f" for="issTitle">Title<input id="issTitle" type="text" autocomplete="off"></label>
+      </div>
+      <label class="f" for="issBody">Description <small>written in plain words; edit it if you like</small><textarea id="issBody" rows="8"></textarea></label>
+      <div class="row"><button class="btn primary" id="issPr" type="button">Open the pull request</button><span class="status" id="issPrMsg" role="status"></span></div>
+    </div>
+  </section>
   <section class="panel tool" id="tool-class" hidden></section>
 </main>
 

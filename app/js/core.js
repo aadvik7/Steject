@@ -559,6 +559,19 @@ SOFTWARE.
     return ops.reverse();
   }
 
+  /** A readable diff of two Map(path -> text) snapshots ("+ added line", "- removed line"), for prompts and PR text. */
+  function changeDiff(before, after, max) {
+    const ch = changedPaths(before, after), out = [];
+    ch.added.forEach(p => out.push(`--- new file ${p}`, ...String(after.get(p)).replace(/\n$/, "").split("\n").map(l => "+ " + l)));
+    ch.changed.forEach(p => {
+      out.push(`--- ${p}`);
+      diffLines(before.get(p) || "", after.get(p) || "").forEach(o => { if (o.t === "+" || o.t === "-") out.push(o.t + " " + o.s); else if (o.t === "!") out.push("(file too large to compare)"); });
+    });
+    ch.deleted.forEach(p => out.push(`--- deleted ${p}`));
+    const text = out.join("\n");
+    return max && text.length > max ? text.slice(0, max) + "\n…(cut)" : text;
+  }
+
   function diffSummary(ops) {
     let add = 0, del = 0;
     ops.forEach(o => { if (o.t === "+") add++; else if (o.t === "-") del++; });
@@ -697,7 +710,7 @@ CHANGE I WANT:
     ManifestError, parse, serialize, finalFiles, stats, scanSecrets, isPlaceholderSecret, safePath,
     convertChatReply, looksLikeManifest, pasteHint, classify,
     skipReason, IMPORT_LIMITS, groupCommits, manifestFromFiles, normalizePlan, fitToPlan, applyChanges, changedPaths, detectStack, polish, fingerprint, withUnderstanding, slug,
-    diffLines, diffSummary, buildScript, fileMode, extractJson, digest,
+    diffLines, diffSummary, changeDiff, buildScript, fileMode, extractJson, digest,
     PROMPT_TEMPLATE, UPDATE_PROMPT, SECRETS,
   };
 });

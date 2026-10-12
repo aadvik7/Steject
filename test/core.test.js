@@ -230,3 +230,13 @@ test("understanding: fingerprint follows content; README section is replaced, no
   const withScore = proj({ "README.md": twice });
   assert.equal(C.fingerprint(withScore), C.fingerprint(proj({ "README.md": "# todo\n\nIntro\n\n## Run\npython main.py\n" })), "adding the score keeps the same fingerprint");
 });
+
+test("changeDiff: readable added, changed and deleted files", () => {
+  const before = new Map([["a.py", "x = 1\ny = 2\n"], ["old.py", "z\n"]]);
+  const after = new Map([["a.py", "x = 1\ny = 3\n"], ["new.py", "print(1)\n"]]);
+  const d = C.changeDiff(before, after);
+  assert.match(d, /--- new file new\.py\n\+ print\(1\)/);
+  assert.match(d, /--- a\.py\n- y = 2\n\+ y = 3/);
+  assert.match(d, /--- deleted old\.py/);
+  assert.match(C.changeDiff(before, after, 20), /…\(cut\)$/);
+});

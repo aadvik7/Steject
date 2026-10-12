@@ -338,6 +338,53 @@ After the candidate answers question ${n}, give feedback and score, set "questio
 THE PROJECT:
 ${digest}` };
     },
+    // ---- issue → pull request
+    issueExplain(issue, digest) {
+      return [
+        { role: "system", content: SYS },
+        { role: "user", content: `A student wants to fix this GitHub issue. Explain it in plain words a beginner understands.\n\nFormat:\n## What the issue asks\n2-3 sentences.\n## Where in the code\nThe files and functions involved, with short quoted snippets.\n## Likely cause\nWhat probably causes it, or what is missing.\n\nISSUE #${issue.number}: ${issue.title}\n${String(issue.body).slice(0, 3000)}${issue.comments && issue.comments.length ? "\n\nCOMMENTS:\n" + issue.comments.join("\n").slice(0, 1500) : ""}\n\nTHE PROJECT:\n${digest}` },
+      ];
+    },
+    issuePlan(issue, explanation, digest) {
+      return [
+        { role: "system", content: SYS + " Respond with JSON only." },
+        { role: "user", content: `Plan the smallest change that fixes this issue. Return JSON exactly like:\n{"summary":"one sentence","steps":["short step", "..."],"files":[{"path":"relative/path","change":"what to change in this file, one line"}]}\nOnly list files that need to change or be added. Add or update a test when the project has tests.\n\nISSUE #${issue.number}: ${issue.title}\n${String(issue.body).slice(0, 2000)}\n\nEXPLANATION:\n${String(explanation).slice(0, 2500)}\n\nTHE PROJECT:\n${digest}` },
+      ];
+    },
+    issueWrite(issue, plan, digest) {
+      return [
+        { role: "system", content: "You fix GitHub issues in student projects. Output ONLY a STEJECT manifest containing the files you add or change: no explanations and no markdown fences." },
+        { role: "user", content:
+`Fix issue #${issue.number}: ${issue.title}
+${String(issue.body).slice(0, 2000)}
+
+The student approved this plan:
+${plan.summary}
+${plan.steps.map(s => "- " + s).join("\n")}
+Files: ${plan.files.map(f => `${f.path} (${f.change})`).join("; ")}
+
+Output ONLY the files you add or change, each one complete, then one COMMIT line:
+=== FILE: <relative/path> ===
+<full new file contents>
+=== COMMIT: <imperative commit message, ending with (#${issue.number})> ===
+Keep the project's style. Never write a line that starts with "=== " inside a file.
+
+THE PROJECT:
+${digest}` },
+      ];
+    },
+    changeQuiz(issue, diff) {
+      return [
+        { role: "system", content: SYS + " Respond with JSON only." },
+        { role: "user", content: `Write 3 multiple-choice questions that check the student understands THIS change: why it fixes the issue, what the changed code does, and what could still go wrong. Return JSON: {"questions":[{"q":"question","options":["A","B","C","D"],"answer":0,"why":"one-sentence explanation"}]}\n\nISSUE #${issue.number}: ${issue.title}\n\nTHE CHANGE:\n${String(diff).slice(0, 6000)}` },
+      ];
+    },
+    prBody(issue, plan, diff, check) {
+      return [
+        { role: "system", content: SYS },
+        { role: "user", content: `Write a pull request description in plain words a beginner could follow. Markdown with exactly these sections:\n## What this changes\n## Why\n## How it was checked\nKeep it under 150 words. Be honest about the check result. End with the line: Fixes #${issue.number}\n\nISSUE #${issue.number}: ${issue.title}\nPLAN: ${plan.summary}\nCHECK RESULT: ${check}\n\nTHE CHANGE:\n${String(diff).slice(0, 4000)}` },
+      ];
+    },
     fixManifest(raw) {
       return [
         { role: "system", content: "You convert text into the STEJECT manifest format. Output ONLY the manifest, nothing else." },
