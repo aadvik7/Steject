@@ -199,6 +199,8 @@ test("detectStack: python, node, web", () => {
   assert.deepEqual([py.lang, py.entry, py.tests, py.test, py.install], ["python", "main.py", true, "python -m pytest", "pip install -r requirements.txt"]);
   const node = C.detectStack(C.finalFiles(proj({ "package.json": '{"scripts":{"test":"node --test","start":"node app.js"}}', "app.js": "" })));
   assert.deepEqual([node.lang, node.test, node.run], ["node", "npm test", "npm start"]);
+  const js = C.detectStack(C.finalFiles(proj({ "main.js": "", "lib.js": "" })));
+  assert.deepEqual([js.lang, js.entry], ["node", "main.js"]);
   const web = C.detectStack(C.finalFiles(proj({ "index.html": "<h1>x</h1>", "style.css": "" })));
   assert.deepEqual([web.lang, web.web, web.html], ["web", true, "index.html"]);
 });

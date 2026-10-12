@@ -14,11 +14,14 @@ const path = require("path");
 
 const WIN = process.platform === "win32";
 const OUTPUT_CAP = 200 * 1024;
+// npm is a .cmd script on Windows, which Node won't start directly; run it through cmd.exe with fixed arguments
+const viaCmd = (cmd, args) => WIN && /^(npm|npx)$/.test(cmd) ? ["cmd.exe", ["/d", "/s", "/c", cmd, ...args]] : [cmd, args];
 
 // ------------------------------------------------------------------ which tools are installed
 function version(cmd, args) {
   try {
-    const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 8000, windowsHide: true, shell: WIN && /^(npm|npx)$/.test(cmd) });
+    const [c, a] = viaCmd(cmd, args);
+    const r = spawnSync(c, a, { encoding: "utf8", timeout: 8000, windowsHide: true });
     if (r.error || r.status !== 0 && !(r.stdout || r.stderr)) return null;
     const line = String(r.stdout || r.stderr).split("\n").find(l => l.trim());
     return line ? line.trim().slice(0, 80) : null;
@@ -80,6 +83,12 @@ function plan(files, tools, opts) {
       js.forEach(f => cmds.push({ cmd: "node", args: ["--check", f], label: `Check ${f} for syntax errors`, timeout: 15000 }));
     }
     return { lang: "node", cmds, note: deps && !opts.allowInstall && test ? "Dependencies are not installed (that needs the network). Turn it on in Settings if the tests need them." : "" };
+  }
+  const looseJs = ext(files, /\.(c|m)?js$/).filter(p => !/^(node_modules|dist|build)\//.test(p));
+  if (looseJs.length && !ext(files, /\.html?$/).length && !ext(files, /\.py$/).length) {
+    // plain JavaScript with no package.json: check each file's syntax
+    if (!tools.node) return missing("Node.js");
+    return { lang: "node", cmds: looseJs.slice(0, 60).map(f => ({ cmd: "node", args: ["--check", f], label: `Check ${f} for syntax errors`, timeout: 15000 })) };
   }
   if (ext(files, /\.py$/).length) {
     if (!tools.python) return missing("Python");
@@ -154,13 +163,12 @@ function runOne(c, cwd, tools, budget) {
   return new Promise(resolve => {
     const isolate = !c.network && tools.isolation === "blocked";
     const prog = c.local ? path.join(cwd, path.basename(c.cmd)) : c.cmd;   // the program we just compiled, by its full path
-    const cmd = isolate ? "unshare" : prog, args = isolate ? ["-rn", prog, ...c.args] : c.args;
+    const [cmd, args] = isolate ? ["unshare", ["-rn", prog, ...c.args]] : viaCmd(prog, c.args);
     let out = "", timedOut = false, child;
     const add = d => { if (budget.left > 0) { const s = String(d).slice(0, budget.left); out += s; budget.left -= s.length; } };
     try {
       child = spawn(cmd, args, {
         cwd, env: minimalEnv(!c.network), windowsHide: true, detached: !WIN, stdio: ["ignore", "pipe", "pipe"],
-        shell: WIN && /^(npm|npx)$/.test(c.cmd),   // npm is a .cmd file on Windows; the arguments are fixed, never user text
       });
     } catch (e) { resolve({ code: -1, output: String(e.message), timedOut: false }); return; }
     child.stdout.on("data", add); child.stderr.on("data", add);

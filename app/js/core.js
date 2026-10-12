@@ -374,6 +374,11 @@
     } else if (has(/\.java$/)) {
       out.lang = "java"; out.tests = has(/Test\.java$/);
       if (files.has("pom.xml")) { out.test = "mvn test"; out.install = "mvn -q compile"; }
+    } else if (has(/\.(c|m)?js$/) && !html) {
+      out.lang = "node";
+      const js = paths.filter(p => /\.(c|m)?js$/.test(p));
+      out.entry = ["index.js", "main.js", "app.js"].find(n => js.includes(n)) || js[0];
+      out.run = `node ${out.entry}`;
     } else if (has(/\.(cpp|cc|cxx)$/)) {
       out.lang = "cpp"; out.run = "g++ -o program *.cpp && ./program";
     } else if (has(/\.c$/)) {

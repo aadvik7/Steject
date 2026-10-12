@@ -21,6 +21,8 @@ test("plan picks commands by language and never runs npm install unless allowed"
   assert.match(node.note, /Dependencies are not installed/);
   const nodeInstall = Checks.plan(files({ "package.json": NODE_PKG("node --test", { dependencies: { chalk: "^5" } }) }), all, { allowInstall: true });
   assert.deepEqual(nodeInstall.cmds.map(c => [Checks.show(c), !!c.network]), [["npm install --ignore-scripts --no-audit --no-fund", true], ["npm test", false]]);
+  const loose = Checks.plan(files({ "app.js": "", "util.js": "" }), all);
+  assert.deepEqual(loose.cmds.map(Checks.show), ["node --check app.js", "node --check util.js"], "plain JavaScript without package.json");
   const noTest = Checks.plan(files({ "package.json": "{}", "a.js": "", "lib/b.mjs": "" }), all);
   assert.deepEqual(noTest.cmds.map(Checks.show), ["node --check a.js", "node --check lib/b.mjs"]);
   const py = Checks.plan(files({ "app.py": "", "test_app.py": "" }), all);
