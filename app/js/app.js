@@ -102,12 +102,23 @@
   function aiModel() { return S.provider === "groq" ? S.groq.model : S.provider === "custom" ? S.custom.model : S.ai.model; }
   const hostOf = u => { try { return new URL(u).host; } catch { return "the AI service"; } };
   function aiLabel() { return S.provider === "groq" ? "Groq" : S.provider === "custom" ? hostOf(S.custom.url) : "your local AI"; }
+  // Ship it for me sets S.auto; every AI call counts against its limits
+  function budgetTick() {
+    const a = S.auto;
+    if (!a) return;
+    if (a.calls >= a.maxCalls) { const e = new Error(`Stopped: the limit of ${a.maxCalls} AI calls was reached.`); e.budget = true; throw e; }
+    if (a.maxTokens && a.tokens >= a.maxTokens) { const e = new Error(`Stopped: the limit of ${a.maxTokens.toLocaleString()} tokens was reached.`); e.budget = true; throw e; }
+    a.calls++;
+  }
   function llm() {
-    const hooks = { onRequest: () => countUsage(S.provider, 0), onUsage: u => countUsage(S.provider, u.total, true) };
+    const hooks = {
+      onRequest: () => { budgetTick(); countUsage(S.provider, 0); },
+      onUsage: u => { if (S.auto) S.auto.tokens += u.total; countUsage(S.provider, u.total, true); },
+    };
     if (S.provider === "groq") return AI.groq(S.groq.key, hooks);
     if (S.provider === "custom") return AI.compat({ base: S.custom.url, key: S.custom.key, name: hostOf(S.custom.url), keyHelp: "Check the key in Settings.", fetch: SteNet.fetch, ...hooks });
     const c = AI.ollama(S.ai.url), chat = c.chat;
-    c.chat = (...a) => { countUsage("ollama", 0); return chat(...a); };
+    c.chat = async (...a) => { budgetTick(); countUsage("ollama", 0); return chat(...a); };
     return c;
   }
   function ollama() { return AI.ollama(S.ai.url); }
@@ -559,8 +570,8 @@
   $("override").addEventListener("change", updateShip);
   $("repoName").addEventListener("input", e => { e.target.dataset.touched = e.target.value ? "1" : ""; });
 
-  function makeLog() {
-    const ul = $("log");
+  function makeLog(id) {
+    const ul = $(id || "log");
     ul.innerHTML = ""; ul.hidden = false;
     const icons = { run: "…", ok: "✓", bad: "✗", skip: "·" };
     const items = {};
@@ -581,9 +592,9 @@
   }
 
   async function doPush({ allowReplace = false, resume = false } = {}) {
-    if (!S.m || S.busy) return;
-    if (!resume && !canShip()) return;
-    if (!S.gh.token) { go("settings", "ghToken"); return; }
+    if (!S.m || S.busy) return { error: new Error("Nothing to push yet.") };
+    if (!resume && !canShip()) return { error: new Error("The push is blocked. See the message under Push.") };
+    if (!S.gh.token) { go("settings", "ghToken"); return { error: new Error("Connect GitHub first.") }; }
     $("replaceBox").hidden = true; $("doneBox").hidden = true;
     const m = S.m, manifestText = ta.value;
     let job;
@@ -617,12 +628,12 @@
         $("replaceText").textContent = `${r.full} already has one commit ("${r.existing}"). STEJECT will replace it with your ${plural(m.commits.length, "commit")}.`;
         $("replaceBox").hidden = false;
         S.ctx = null;
-        return;
+        return r;
       }
       S.ctx = null;
       if (r.nothing) {
         log.update("ref", "skip", "Everything already matches GitHub. Nothing to push.");
-        return;
+        return r;
       }
       log.run("tg", "Telegram alert");
       const what = r.pr ? `opened pull request #${r.pr.number} on` : job.mode === "update" ? "updated" : "shipped";
@@ -634,11 +645,13 @@
       if (r.pr) { $("prBranch").dataset.touched = ""; $("prTitle").dataset.touched = ""; }
       if (job.mode === "update") { S.target = null; compareTarget(); }
       else { S.repos = []; }
+      return r;
     } catch (e) {
       log.fail(e.message || String(e));
       if (S.ctx && S.ctx.next > 0) log.update("hint", "skip", `Stopped after ${S.ctx.next} of ${m.commits.length} commits. Nothing on GitHub changed yet. Click Resume push to continue.`);
       if (e.status === 401) { await setGh(null, null); }
       notify(`❌ STEJECT failed for ${job.full || job.name}: ${(e.message || "").slice(0, 200)}`);
+      return { error: e };
     } finally {
       S.busy = false; updateShip();
     }
@@ -1327,46 +1340,174 @@
     const ins = $$("#planList .pcm"); ins[ins.length - 1].focus();
   });
 
-  $("planWrite").addEventListener("click", async () => {
-    if (!S.plan || !aiOn()) return;
+  /** Write the plan in the editor. say(text) reports progress. Returns {plan, missing}; throws with a plain message. */
+  async function writeApprovedPlan(say, maxFiles) {
     let plan;
     try {
       const raw = readPlanDom();
-      plan = C.normalizePlan({ ...raw, commits: raw.commits.map(c => ({ ...c, files: c.files.filter(f => f.path.trim()) })) }, 25);
-    } catch (e) { setStatus("ideaMsg", "Fix the plan first: " + e.message, "bad"); return; }
+      plan = C.normalizePlan({ ...raw, commits: raw.commits.map(c => ({ ...c, files: c.files.filter(f => f.path.trim()) })) }, maxFiles || 25);
+    } catch (e) { throw new Error("Fix the plan first: " + e.message); }
     const { idea, size } = S.plan;
-    $("planWrite").disabled = $("ideaGo").disabled = true; $("ideaStop").hidden = false;
     const messages = AI.prompts.writePlan(idea, plan, size);
     let written = null;
+    for (let attempt = 0; ; attempt++) {
+      let cut = false, problem = "";
+      say(attempt ? `Fixing a problem (try ${attempt + 1} of 3)…` : "Writing the approved files… this takes about half a minute.");
+      const out = await aiRun(signal => llm().chat(aiModel(), messages, {
+        signal, temperature: 0.3, ctx: 16384, maxTokens: size === "medium" ? 8000 : 5000,
+        onText: t => say(`${attempt ? "Fixing" : "Writing"}… ${t.length.toLocaleString()} characters so far`),
+        onWait: sec => say(pauseText(sec)), onFinish: r => { cut = r === "length"; },
+      }));
+      if (cut) throw new Error("The project got cut off because it was too long. Remove some files from the plan, or pick Small.");
+      try {
+        const fit = C.fitToPlan(C.parse(cleanFence(out)), plan);
+        if (!fit.m.commits.length) throw new C.ManifestError("The project has no files.");
+        if (fit.missing.length && attempt < 2) problem = `These planned files are missing: ${fit.missing.join(", ")}.`;
+        else { written = fit; break; }
+      } catch (pe) { problem = pe.message; }
+      if (attempt >= 2) throw new Error("The AI kept returning a broken format (" + problem + "). Try again.");
+      messages.push({ role: "assistant", content: out }, { role: "user", content: `That output has a problem: ${problem}\nOutput the complete manifest again with every planned file. Output only the manifest.` });
+    }
+    S.plan = null; renderPlan(); S.imported = null;
+    setText(C.serialize(written.m), true, null, `Before writing "${plan.project}"`);
+    return { plan, missing: written.missing };
+  }
+
+  $("planWrite").addEventListener("click", async () => {
+    if (S.auto && S.auto.approve) { const go = S.auto.approve; S.auto.approve = null; go(); return; }   // Ship it for me is waiting
+    if (!S.plan || !aiOn()) return;
+    $("planWrite").disabled = $("ideaGo").disabled = true; $("ideaStop").hidden = false;
     try {
-      for (let attempt = 0; ; attempt++) {
-        let cut = false, problem = "";
-        setStatus("ideaMsg", attempt ? `Fixing a problem (try ${attempt + 1} of 3)…` : "Writing the approved files… this takes about half a minute.", "info");
-        const out = await aiRun(signal => llm().chat(aiModel(), messages, {
-          signal, temperature: 0.3, ctx: 16384, maxTokens: size === "medium" ? 8000 : 5000,
-          onText: t => setStatus("ideaMsg", `${attempt ? "Fixing" : "Writing"}… ${t.length.toLocaleString()} characters so far`, "info"),
-          onWait: waitNote("ideaMsg"), onFinish: r => { cut = r === "length"; },
-        }));
-        if (cut) throw new Error("The project got cut off because it was too long. Remove some files from the plan, or pick Small.");
-        try {
-          const fit = C.fitToPlan(C.parse(cleanFence(out)), plan);
-          if (!fit.m.commits.length) throw new C.ManifestError("The project has no files.");
-          if (fit.missing.length && attempt < 2) problem = `These planned files are missing: ${fit.missing.join(", ")}.`;
-          else { written = fit; break; }
-        } catch (pe) { problem = pe.message; }
-        if (attempt >= 2) throw new Error("The AI kept returning a broken format (" + problem + "). Try again.");
-        messages.push({ role: "assistant", content: out }, { role: "user", content: `That output has a problem: ${problem}\nOutput the complete manifest again with every planned file. Output only the manifest.` });
-      }
-      S.plan = null; renderPlan(); S.imported = null;
-      setText(C.serialize(written.m), true, null, `Before writing "${plan.project}"`);
+      const w = await writeApprovedPlan(t => setStatus("ideaMsg", t, "info"));
       const st = C.stats(S.m);
-      setStatus("ideaMsg", `Done: ${plural(st.files, "file")} in ${plural(st.commits, "commit")}, as planned${written.missing.length ? ` (still missing: ${written.missing.join(", ")})` : ""}. Read the code in Inspect before you push.`, "ok");
+      setStatus("ideaMsg", `Done: ${plural(st.files, "file")} in ${plural(st.commits, "commit")}, as planned${w.missing.length ? ` (still missing: ${w.missing.join(", ")})` : ""}. Read the code in Inspect before you push.`, "ok");
       if ($("autoCheck").checked) selfCheck({ fix: true });
     } catch (e) {
       setStatus("ideaMsg", e.name === "AbortError" ? "Stopped." : e.message, "bad");
     } finally { $("ideaStop").hidden = true; render(); }
   });
   $("ideaStop").addEventListener("click", () => aiAbort && aiAbort.abort());
+
+  // ================================================================ SHIP: Ship it for me (idea → plan → approve → write → check → fix → safety → push)
+  const num = (id, lo, hi, d) => { const v = parseInt($(id).value, 10); return isNaN(v) ? d : Math.max(lo, Math.min(hi, v)); };
+  function autoUi(running) {
+    $("autoStart").hidden = running; $("autoCancel").hidden = running; $("autoStop").hidden = !running;
+    ["autoCalls", "autoTokens", "autoFiles", "autoFail", "autoFixes", "autoPrivate"].forEach(id => { $(id).disabled = running; });
+    $("ideaGo").disabled = running || !aiOn(); $("autoGo").disabled = running;
+  }
+  $("autoGo").addEventListener("click", () => {
+    $("autoBox").hidden = false; $("autoSummary").hidden = true;
+    setStatus("ideaMsg", S.gh.login ? "Set the limits, then click Start." : "Connect GitHub in Settings first: Ship it for me pushes the project for you.", S.gh.login ? "info" : "bad");
+  });
+  $("autoCancel").addEventListener("click", () => { $("autoBox").hidden = true; });
+  $("autoStop").addEventListener("click", () => {
+    if (!S.auto) return;
+    S.auto.stopped = true;
+    if (S.auto.reject) S.auto.reject(new DOMException("Stopped", "AbortError"));
+    aiAbort && aiAbort.abort(); runAbort && runAbort.abort();
+  });
+
+  $("autoStart").addEventListener("click", async () => {
+    const idea = $("ideaText").value.trim();
+    if (idea.length < 10) { setStatus("ideaMsg", "Describe the project in a sentence or two first.", "bad"); return; }
+    if (!aiOn()) { setStatus("ideaMsg", "Set up an AI helper in Settings first.", "bad"); return; }
+    if (!S.gh.login) { setStatus("ideaMsg", "Connect GitHub in Settings first.", "bad"); return; }
+    const g = {
+      maxCalls: num("autoCalls", 2, 40, 10), maxTokens: num("autoTokens", 0, 10000000, 60000), maxFiles: num("autoFiles", 2, 25, 9),
+      onFail: $("autoFail").value, fixes: num("autoFixes", 1, 5, 3), priv: $("autoPrivate").checked,
+    };
+    S.auto = { ...g, calls: 0, tokens: 0, stopped: false, approve: null, reject: null };
+    autoUi(true);
+    $("autoSummary").hidden = true;
+    setStatus("ideaMsg", "");
+    const L = makeLog("autoLog");
+    const stop = (msg, kind) => { const e = new Error(msg); e.autoStop = kind || "stopped"; return e; };
+    let result = null, check = null, fixes = 0, plan = null;
+    try {
+      // 1. plan
+      L.run("plan", "Planning the files and commits");
+      const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.plan(idea, ideaSize), { signal, json: true, temperature: 0.3, maxTokens: 1500 }));
+      let p;
+      try { p = C.normalizePlan(C.extractJson(out), 25); } catch (e) { throw stop("The AI's plan wasn't usable: " + e.message); }
+      const n = p.commits.reduce((a, c) => a + c.files.length, 0);
+      if (n > g.maxFiles) throw stop(`The plan has ${n} files, more than your limit of ${g.maxFiles}. Raise the limit or pick Small.`);
+      S.plan = { idea, size: ideaSize, ...p };
+      renderPlan();
+      $("planWrite").textContent = "Approve and ship it";
+      L.update("plan", "ok", `Plan ready: ${plural(n, "file")} in ${plural(p.commits.length, "commit")}`);
+
+      // 2. the student approves (and may edit) the plan
+      L.run("approve", "Waiting for you: check the plan below, edit it if you like, then click Approve and ship it");
+      await new Promise((res, rej) => { S.auto.approve = res; S.auto.reject = rej; });
+      S.auto.reject = null;
+      L.update("approve", "ok", "Plan approved");
+
+      // 3. write
+      L.run("write", "Writing the files");
+      const w = await writeApprovedPlan(t => L.run("write", t), g.maxFiles);
+      plan = w.plan;
+      L.update("write", "ok", `Wrote ${plural(C.stats(S.m).files, "file")} in ${plural(S.m.commits.length, "commit")}${w.missing.length ? ` (missing: ${w.missing.join(", ")})` : ""}`);
+
+      // 4. check, and the fix loop
+      runAbort = new AbortController();
+      const doCheck = async label => {
+        L.run(label, "Checking it runs");
+        const r = await SteRun.check(S.m, { signal: runAbort.signal, host: $("runHost"), onProgress: t => L.run(label, t) });
+        S.run = { fp: C.fingerprint(S.m), ...r };
+        return r;
+      };
+      check = await doCheck("check");
+      while (check.status === "fail" && g.onFail === "fix" && fixes < g.fixes && !S.auto.stopped) {
+        fixes++;
+        L.update(fixes === 1 ? "check" : "check" + (fixes - 1), "bad", `Check failed: ${check.summary}`);
+        L.run("fix" + fixes, `The AI is fixing it (try ${fixes} of ${g.fixes})`);
+        if (!(await aiFix(check, fixes))) { L.update("fix" + fixes, "bad", "The AI's fix wasn't in the right format"); break; }
+        L.update("fix" + fixes, "ok", `AI fix ${fixes} applied`);
+        check = await doCheck("check" + fixes);
+      }
+      const lastCheck = fixes ? "check" + fixes : "check";
+      if (S.auto.stopped) throw new DOMException("Stopped", "AbortError");
+      if (check.status === "fail") { L.update(lastCheck, "bad", `Check failed: ${check.summary}`); throw stop(g.onFail === "stop" ? "The check failed, so STEJECT stopped as you asked. Read the output in Inspect." : `It still fails after ${plural(fixes, "AI fix")}, so STEJECT didn't push it. Read the output in Inspect.`); }
+      if (check.status === "pass") L.update(lastCheck, "ok", check.summary + (fixes ? ` after ${fixes} AI fix${fixes === 1 ? "" : "es"}` : ""));
+      else L.update(lastCheck, "skip", `${check.summary}${check.detail ? ". " + check.detail : ""} Continuing without a check.`);
+
+      // 5. safety
+      L.run("safety", "Safety checks");
+      if (blocks().length) { L.update("safety", "bad", `Blocked: ${plural(blocks().length, "possible secret")}`); throw stop("Possible secrets were found, so nothing was pushed. Remove them (see Inspect) and push yourself.", "blocked"); }
+      if (warns().length) { L.update("safety", "bad", `${plural(warns().length, "warning")} need you`); throw stop(`There ${warns().length === 1 ? "is 1 safety warning" : `are ${warns().length} safety warnings`} for you to read in Inspect. If they're fine, tick "I checked" under Push and click Push.`, "warnings"); }
+      if (!gateOk()) { L.update("safety", "bad", "The understanding gate is on"); throw stop("The understanding gate is on: pass the quiz or mock interview on Learn, then click Push.", "gate"); }
+      L.update("safety", "ok", "No secrets or warnings");
+
+      // 6. push to a new repo
+      L.run("push", `Pushing to a new ${g.priv ? "private" : "public"} repo`);
+      setMode("new");
+      $("repoName").value = (plan && plan.project) || S.m.project; $("repoName").dataset.touched = "1";
+      document.querySelector(`input[name="vis"][value="${g.priv ? "private" : "public"}"]`).checked = true;
+      result = await doPush();
+      if (!result || result.error) throw stop("The push failed: " + (result && result.error ? result.error.message : "unknown error") + ". See the log under Push.");
+      if (result.status === "confirm") throw stop(`${result.full} already exists with one commit. Choose under Push whether to replace it.`);
+      L.update("push", "ok", `Pushed to ${result.full}`);
+    } catch (e) {
+      const stopped = e.name === "AbortError" || (S.auto && S.auto.stopped);
+      L.fail(stopped ? "Stopped. Nothing more will happen; what's done so far is in the Paste box." : e.message);
+      setStatus("ideaMsg", stopped ? "Stopped." : e.message, "bad");
+    } finally {
+      const a = S.auto || { calls: 0, tokens: 0 };
+      runAbort = null;
+      S.auto = null;
+      $("planWrite").textContent = "Approve and write the files";
+      $("repoName").dataset.touched = ""; lastProject = null;   // the next project gets its own repo name again
+      autoUi(false);
+      render();
+      if (S.m && (result || check)) {
+        const st = C.stats(S.m), box = $("autoSummary");
+        box.className = "callout " + (result && !result.error && result.status === "done" ? "ok" : "warn");
+        box.innerHTML = `<span><b>${result && result.status === "done" ? "Shipped." : "Not pushed."}</b> ${plural(st.files, "file")} · ${plural(st.commits, "commit")} · check: ${esc(check ? check.summary : "not run")}${fixes ? ` (${fixes} AI fix${fixes === 1 ? "" : "es"})` : ""} · ${plural(a.calls, "AI call")}${a.tokens ? ", " + a.tokens.toLocaleString() + " tokens" : ""}</span>` +
+          (result && result.url ? `<a href="${esc(result.url)}" target="_blank" rel="noopener">${esc(result.url.replace(/^https:\/\//, ""))}</a>` : "");
+        box.hidden = false;
+      }
+    }
+  });
 
   // ================================================================ SHIP: change it with AI
   async function chatChange() {
@@ -1424,6 +1565,15 @@
     $("runDetails").hidden = !outText;
     if (outText) { $("runOut").textContent = outText; $("runSum").textContent = r.kind === "web" ? "Page console" : "Output"; }
   }
+  /** Ask the AI to fix a failed check and apply its changed files. False if its reply couldn't be used. */
+  async function aiFix(r, n, onWait) {
+    const before = C.finalFiles(S.m);
+    const out = await aiRun(sig => llm().chat(aiModel(), AI.prompts.fixRun(r.output || r.summary, C.digest(S.m, codeBudget()), r.kind), { signal: sig, temperature: 0.2, ctx: 16384, maxTokens: 6000, onWait }));
+    let change;
+    try { change = C.parse(cleanFence(out)); } catch { return false; }
+    setText(C.serialize(C.applyChanges(S.m, change, { inPlace: S.imported !== "github" })), true, before, `Before AI fix ${n}`);
+    return true;
+  }
   /** Run the project's check; with fix, send failures to the AI and retry, up to 3 fixes. */
   async function selfCheck({ fix } = {}) {
     if (!S.m || runAbort) return;
@@ -1441,13 +1591,9 @@
         if (!fix || r.status !== "fail" || tries >= 3 || !aiOn() || signal.aborted) break;
         tries++;
         setStatus("runMsg", `It fails. The AI is fixing it (try ${tries} of 3)…`, "info");
-        const before = C.finalFiles(S.m);
-        const out = await aiRun(sig => llm().chat(aiModel(), AI.prompts.fixRun(r.output || r.summary, C.digest(S.m, codeBudget()), r.kind), { signal: sig, temperature: 0.2, ctx: 16384, maxTokens: 6000, onWait: waitNote("runMsg") }));
+        const applied = await aiFix(r, tries, waitNote("runMsg"));
         if (signal.aborted) break;
-        let change;
-        try { change = C.parse(cleanFence(out)); }
-        catch { S.run = { ...S.run, summary: S.run.summary + " (the AI's fix wasn't in the right format)" }; break; }
-        setText(C.serialize(C.applyChanges(S.m, change, { inPlace: S.imported !== "github" })), true, before, `Before AI fix ${tries}`);
+        if (!applied) { S.run = { ...S.run, summary: S.run.summary + " (the AI's fix wasn't in the right format)" }; break; }
         r = null;
       }
     } catch (e) {

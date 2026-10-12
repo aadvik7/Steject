@@ -29,6 +29,7 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **Resume:** if your internet drops mid-push, continue from where it stopped.
 - **Checkpoints and undo:** every AI change saves a checkpoint you can restore in one click, and the last push to a repo can be undone (a safe revert commit, or a reset).
 - **Telegram alerts:** get a message when a push succeeds or fails.
+- **Ship it for me:** one button from idea to pushed repo: plan (you approve it), write, check, AI fixes, safety checks, push. You set the limits (AI calls, tokens, files, fix tries); private repo by default; it never pushes a secret.
 - **Start from an idea, plan first:** describe a project (or pick one of 18 starters) and the AI proposes a file tree and commit plan. Edit it, approve it, and only then are the files written.
 - **Check it runs, and fix it:** Python tests or the main script run in the browser, and web pages open in a sandbox. If it fails, the error goes back to the AI to fix, up to 3 tries.
 - **Live preview:** web projects show in a sandboxed preview tab with no network access.

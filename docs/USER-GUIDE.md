@@ -26,6 +26,21 @@ Needs an AI helper (Settings → AI helper).
 
 Tips: name the language, say what it should do, and ask for tests. Small projects work best on the free cloud AI.
 
+## Ship it for me
+
+One button takes an idea all the way to a pushed repo. Needs an AI helper and GitHub connected.
+
+1. In **Start from an idea**, describe the project (or pick a starter) and click **Ship it for me**.
+2. Set the limits first:
+   - **Most AI calls** and **Most tokens**: STEJECT stops before going over them (useful on free plans).
+   - **Most files**: a bigger plan is refused.
+   - **If the check fails**: let the AI fix it (up to the number of tries you choose), or stop and show you.
+   - **Private repo** is ticked by default.
+3. Click **Start**. STEJECT plans the project, then **waits for you**: edit the plan if you like and click **Approve and ship it**.
+4. It writes the files, checks they run, fixes failures, runs the safety checks and pushes. The step list shows each stage live, and **Stop** ends it at any time.
+
+It never pushes if the safety checks find a possible secret. If there are only warnings, or the understanding gate is on, it stops and leaves the last step to you. At the end you get a summary: files, commits, the check result, AI calls used and the repo link.
+
 ## Check it runs, and preview it
 
 In Inspect, click **▶ Check it runs**:

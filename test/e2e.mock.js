@@ -24,7 +24,7 @@ const ok = (c, m) => { if (c) console.log("ok -", m); else { failures++; console
 const TOKEN = "ghp_" + "t".repeat(36);
 const sha = () => crypto.randomBytes(20).toString("hex");
 const repos = {};
-let failNextCommitPost = 0, passBeforeFail = 0, lastPatch = null, noWorkflowScope = false, prs = [];
+let lastCreate = null, failNextCommitPost = 0, passBeforeFail = 0, lastPatch = null, noWorkflowScope = false, prs = [];
 const blobIds = new Map(); let blobSeq = 0;
 function mkRepo(full, files, n) {
   const [owner, name] = full.split("/");
@@ -52,7 +52,7 @@ async function gh(route) {
   if (req.headers()["authorization"] !== "Bearer " + TOKEN) return send(401, { message: "Bad credentials" });
   if (p === "/user") return send(200, { login: "aadvik" });
   if (p === "/user/repos" && m === "GET") return send(200, Object.values(repos).map(rj));
-  if (p === "/user/repos" && m === "POST") { const r = mkRepo("aadvik/" + body.name, { "README.md": "# " + body.name + "\n" }, body.auto_init ? 1 : 0); return send(201, rj(r)); }
+  if (p === "/user/repos" && m === "POST") { lastCreate = body; const r = mkRepo("aadvik/" + body.name, { "README.md": "# " + body.name + "\n" }, body.auto_init ? 1 : 0); return send(201, rj(r)); }
   const mm = p.match(/^\/repos\/([^/]+)\/([^/]+)(.*)$/);
   if (!mm) return send(404, { message: "Not Found" });
   const r = repos[mm[1] + "/" + mm[2]], rest = mm[3];
@@ -439,6 +439,56 @@ async function customMock(route) {
   await page.click("#planWrite"); await page.waitForTimeout(600);
   ok((await page.textContent("#ideaMsg")).includes("cut off"), "cut-off reply: explained instead of a half project");
   await page.click("#planCancel");
+
+  // ---- 9e2. Ship it for me: plan → approve → write → check → AI fix → safety → push, within limits
+  const withIgnore = t => t.replace("=== COMMIT: Add README ===", "=== FILE: .gitignore ===\n__pycache__/\n=== COMMIT: Add README ===");
+  const shipGood = withIgnore(good.replace("todo-cli", "auto-todo"));
+  const shipPlan = PLAN.replace("todo-cli", "auto-todo");
+  await page.fill("#ideaText", "A Python command-line to-do app with tests");
+  await page.click("#autoGo");
+  ok(await page.isVisible("#autoBox") && await page.isChecked("#autoPrivate"), "ship it for me: limits first, private repo by default");
+  groqCalls = []; pyRuns = 0;
+  groqPlan = [{ text: shipPlan }, { text: shipGood }, { text: fixed }];
+  pyPlan = [{ status: "fail", output: "FAILED test_todo.py::test_add" }, { status: "pass", output: "1 passed" }];
+  await page.click("#autoStart");
+  await page.waitForFunction(() => /Waiting for you/.test(document.querySelector("#autoLog").textContent), null, { timeout: 8000 });
+  ok(await page.isVisible("#planBox") && (await page.textContent("#planWrite")) === "Approve and ship it" && groqCalls.length === 1, "ship it for me: pauses for the student to approve the plan");
+  await page.click("#planWrite");
+  await page.waitForFunction(() => !document.querySelector("#autoSummary").hidden, null, { timeout: 20000 });
+  const autoLog = await page.textContent("#autoLog"), summary = await page.textContent("#autoSummary");
+  ok(/Plan approved/.test(autoLog) && /AI fix 1 applied/.test(autoLog) && /Tests pass after 1 AI fix/.test(autoLog) && /No secrets or warnings/.test(autoLog) && /Pushed to aadvik\/auto-todo/.test(autoLog), "ship it for me: live step list through write, check, fix, safety and push");
+  ok(repos["aadvik/auto-todo"] && lastCreate.private === true && hist(repos["aadvik/auto-todo"]).length === 3, "ship it for me: pushed to a new private repo with the planned commits");
+  ok(/Shipped\./.test(summary) && /3 commits/.test(summary) && /3 AI calls/.test(summary) && /github\.com\/aadvik\/auto-todo/.test(summary), "ship it for me: summary with files, commits, check, AI calls and the repo link");
+
+  // limits: a fix would exceed 2 AI calls → stops, nothing pushed
+  await page.fill("#ideaText", "A Python command-line to-do app with tests");
+  await page.fill("#autoCalls", "2");
+  groqPlan = [{ text: PLAN.replace("todo-cli", "limit-todo") }, { text: withIgnore(good.replace("todo-cli", "limit-todo")) }, { text: fixed }];
+  pyPlan = [{ status: "fail", output: "FAILED" }];
+  await page.click("#autoStart");
+  await page.waitForFunction(() => /Waiting for you/.test(document.querySelector("#autoLog").textContent), null, { timeout: 8000 });
+  await page.click("#planWrite");
+  await page.waitForFunction(() => /limit of 2 AI calls/.test(document.querySelector("#autoLog").textContent), null, { timeout: 15000 });
+  ok(!repos["aadvik/limit-todo"] && (await page.textContent("#autoSummary")).includes("Not pushed"), "ship it for me: the AI-call limit stops it before pushing");
+
+  // safety: a secret in the written project stops it, nothing pushed
+  await page.fill("#autoCalls", "10");
+  groqPlan = [{ text: PLAN.replace("todo-cli", "leaky") }, { text: withIgnore(good.replace("todo-cli", "leaky").replace("import json", 'TOKEN = "ghp_' + "z".repeat(36) + '"')) }];
+  pyPlan = [{ status: "pass" }];
+  await page.click("#autoStart");
+  await page.waitForFunction(() => /Waiting for you/.test(document.querySelector("#autoLog").textContent), null, { timeout: 8000 });
+  await page.click("#planWrite");
+  await page.waitForFunction(() => /nothing was pushed/.test(document.querySelector("#autoLog").textContent), null, { timeout: 15000 });
+  ok(!repos["aadvik/leaky"] && (await page.textContent("#autoLog")).includes("Blocked"), "ship it for me: never pushes when a secret is found");
+
+  // Stop while it waits for approval
+  groqPlan = [{ text: PLAN }];
+  await page.click("#autoStart");
+  await page.waitForFunction(() => /Waiting for you/.test(document.querySelector("#autoLog").textContent), null, { timeout: 8000 });
+  await page.click("#autoStop");
+  await page.waitForFunction(() => /Stopped/.test(document.querySelector("#autoLog").textContent), null, { timeout: 5000 });
+  ok(await page.isVisible("#autoStart") && (await page.textContent("#planWrite")) === "Approve and write the files", "ship it for me: Stop ends it cleanly");
+  await page.click("#autoCancel"); await page.click("#planCancel");
 
   // ---- 9f. change it with AI: only the changed files come back, as a new commit with a diff
   await page.fill("#manifest", good); await page.waitForTimeout(300);

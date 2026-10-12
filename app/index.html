@@ -85,6 +85,24 @@
             </div>
             <button class="btn ai" id="ideaGo" type="button">Plan the project</button>
             <button class="btn" id="ideaStop" type="button" hidden>Stop</button>
+            <button class="btn primary" id="autoGo" type="button">Ship it for me</button>
+          </div>
+          <div class="planbox" id="autoBox" hidden>
+            <h3 class="k">Ship it for me · set the limits first</h3>
+            <p class="note">STEJECT plans the project and waits for you to approve the plan. Then it writes the files, checks they run, lets the AI fix problems, runs the safety checks and pushes. It never pushes if it finds a possible secret, and stops for you if there are warnings.</p>
+            <div class="row">
+              <label class="f" for="autoCalls">Most AI calls<input id="autoCalls" type="number" min="2" max="40" value="10"></label>
+              <label class="f" for="autoTokens">Most tokens <small>0 = no limit</small><input id="autoTokens" type="number" min="0" step="1000" value="60000"></label>
+              <label class="f" for="autoFiles">Most files<input id="autoFiles" type="number" min="2" max="25" value="9"></label>
+            </div>
+            <div class="row">
+              <label class="f" for="autoFail">If the check fails<select id="autoFail"><option value="fix">Let the AI fix it</option><option value="stop">Stop and show me</option></select></label>
+              <label class="f" for="autoFixes">AI fix tries<input id="autoFixes" type="number" min="1" max="5" value="3"></label>
+            </div>
+            <label class="cb"><input id="autoPrivate" type="checkbox" checked> <span>Make the repo <b>private</b> (you can make it public later on GitHub)</span></label>
+            <div class="row"><button class="btn primary" id="autoStart" type="button">Start</button><button class="btn" id="autoCancel" type="button">Close</button><button class="btn" id="autoStop" type="button" hidden>Stop</button></div>
+            <ul class="log" id="autoLog" hidden aria-live="polite"></ul>
+            <div class="callout" id="autoSummary" hidden></div>
           </div>
           <div class="planbox" id="planBox" hidden>
             <div class="row" style="justify-content:space-between"><h3 class="k">Plan · edit anything, then approve</h3><span class="note" id="planCount"></span></div>
