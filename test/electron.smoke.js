@@ -7,7 +7,9 @@ const http = require("http");
 const { _electron: electron } = require(process.env.PW_PATH || "playwright");
 
 let failures = 0;
-const ok = (c, m) => { if (c) console.log("ok -", m); else { failures++; console.error("FAIL -", m); } };
+// on GitHub Actions, failures also become annotations (readable on the run page without logging in)
+const gha = msg => { if (process.env.GITHUB_ACTIONS) console.log("::error title=Desktop smoke test::" + String(msg).replace(/[\s]+/g, " ").slice(0, 900)); };
+const ok = (c, m) => { if (c) console.log("ok -", m); else { failures++; console.error("FAIL -", m); gha("FAIL - " + m); } };
 
 const fakeOllama = http.createServer((req, res) => {
   if (req.headers.origin) { res.writeHead(403); return res.end(); }          // what real Ollama does for unknown origins
@@ -74,4 +76,4 @@ const fakeOllama = http.createServer((req, res) => {
   fakeOllama.close();
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");
   process.exit(failures ? 1 : 0);
-})().catch(e => { console.error(e); process.exit(1); });
+})().catch(e => { console.error(e); gha("Crashed: " + (e && e.stack || e)); process.exit(1); });
