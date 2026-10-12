@@ -200,8 +200,9 @@
         throw e;
       }
       log.update("ref", "ok", `${head} → ${ctx.parent.slice(0, 7)}`);
-      log.run("pr", `Opening a pull request into ${ctx.branch}`);
-      const pr = await req(`${base}/pulls`, { method: "POST", body: { title: job.pr.title || manifest.commits[manifest.commits.length - 1].message, head, base: ctx.branch, body: job.pr.body || "", maintainer_can_modify: true } });
+      const into = job.pr.repo || ctx.full, intoBranch = job.pr.base || ctx.branch;
+      log.run("pr", `Opening a pull request into ${into} (${intoBranch})`);
+      const pr = await req(`/repos/${into}/pulls`, { method: "POST", body: { title: job.pr.title || manifest.commits[manifest.commits.length - 1].message, head: job.pr.headOwner ? `${job.pr.headOwner}:${head}` : head, base: intoBranch, body: job.pr.body || "", maintainer_can_modify: true } });
       log.update("pr", "ok", `Pull request #${pr.number} opened`);
       return { status: "done", url: pr.html_url, full: ctx.full, commits: ctx.made.length, pr: { number: pr.number, url: pr.html_url, branch: head } };
     }
@@ -261,7 +262,7 @@
       }
     }));
     const sorted = new Map([...files].sort((a, b) => a[0] < b[0] ? -1 : 1));
-    return { files: sorted, skipped, branch, head: ref.object.sha, full: repo.full_name };
+    return { files: sorted, skipped, branch, head: ref.object.sha, full: repo.full_name, tree: tree.tree.filter(e => e.type === "blob").map(e => ({ path: e.path, size: e.size || 0 })), repo };
   }
 
   /**
@@ -286,7 +287,34 @@
     return { head: commit.sha };
   }
 
-  const api = { GhError, me, listRepos, repoState, readFile, ship, importRepo, undoPush, b64, unb64 };
+  /**
+   * Where to push changes for `upstream`: the repo itself if you can push to it, otherwise your fork
+   * (created if needed, then synced with the original). Returns {target, fork, base, upstream}.
+   */
+  async function pushTarget(token, upstream, onStep) {
+    const { req, retry } = client(token);
+    const repo = await req(`/repos/${upstream}`);
+    const base = repo.default_branch || "main";
+    if (repo.permissions && repo.permissions.push) return { target: repo.full_name, fork: false, base, upstream: repo.full_name };
+    onStep && onStep("Making your own copy (a fork) to push to");
+    const f = await req(`/repos/${upstream}/forks`, { method: "POST", body: { default_branch_only: true } });
+    // a new fork takes a few seconds to appear
+    await retry(() => req(`/repos/${f.full_name}/git/ref/heads/${encodeURIComponent(f.default_branch || base)}`), 8);
+    try { await req(`/repos/${f.full_name}/merge-upstream`, { method: "POST", body: { branch: f.default_branch || base } }); } catch {}
+    return { target: f.full_name, fork: true, base, upstream: repo.full_name, owner: f.owner.login };
+  }
+
+  /** An issue: {number, title, body, state, url, comments: [text]} */
+  async function getIssue(token, full, number) {
+    const { req } = client(token);
+    const i = await req(`/repos/${full}/issues/${number}`);
+    if (i.pull_request) throw new GhError(400, "That link is a pull request, not an issue.");
+    let comments = [];
+    if (i.comments) { try { comments = (await req(`/repos/${full}/issues/${number}/comments?per_page=10`)).map(c => `${c.user && c.user.login}: ${c.body || ""}`); } catch {} }
+    return { number: i.number, title: i.title, body: i.body || "", state: i.state, url: i.html_url, comments };
+  }
+
+  const api = { GhError, me, listRepos, repoState, readFile, ship, importRepo, undoPush, pushTarget, getIssue, b64, unb64 };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.SteGitHub = api;
 })(typeof self !== "undefined" ? self : this);

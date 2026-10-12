@@ -105,6 +105,21 @@ To delete a file, the manifest needs `=== DELETE: path/to/file ===` before a `CO
   - **Reset:** moves the branch back and deletes the pushed commits from history. You must type the repo name, and STEJECT refuses if someone pushed after you.
   - A push that **created** the repo can't be reverted to an earlier version (there isn't one). Delete the repo on GitHub instead: Settings → Danger Zone.
 
+## Repo doctor (Tools page)
+
+Type any GitHub repo (`owner/name` or its link) and click **Check it**. STEJECT reads it and gives a **score out of 100** with a checklist, each item explained in plain words:
+
+- README, and whether it says how to install, run and test the project
+- LICENSE and .gitignore
+- committed junk (`node_modules`, `__pycache__`, `.env`, build output…)
+- tests and CI
+- big files (GitHub warns at 50 MB)
+- leaked secrets
+- dependencies a major version behind (looked up on npm and PyPI)
+- a clear folder structure
+
+**Fix it** shows a plan of the fixes; untick what you don't want and click **Approve and write the fixes**. LICENSE, .gitignore and CI are added directly; the README and tests are written by your AI helper; committed junk is removed from the repo (not from anyone's computer) and added to .gitignore. The fixes open on the Ship page as commits for you to read, ready to push as a **pull request**. If it isn't your repo, STEJECT makes your own copy (a *fork*) and opens the pull request from there.
+
 ## 4. If a push fails
 
 Nothing on GitHub changes until the very last step, so a failed push never leaves a half-updated branch. Click **Resume push** to continue from the commit that failed.

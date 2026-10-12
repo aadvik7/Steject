@@ -35,7 +35,8 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **Live preview:** web projects show in a sandboxed preview tab with no network access.
 - **Change it by chatting:** type "add a delete command" and get only the changed files as a new commit, with a diff.
 - **Open an existing project:** a local folder or a GitHub repo, to explain, improve or extend it.
-- **Pull requests:** push to a new branch and open a PR instead of writing to main.
+- **Pull requests:** push to a new branch and open a PR instead of writing to main. For repos you can't push to, STEJECT uses your fork.
+- **Repo doctor:** a score out of 100 and a plain-words checklist for any GitHub repo (README, license, .gitignore and committed junk, tests, CI, big files, leaked secrets, old dependencies, structure), and **Fix it** turns the gaps into a reviewable pull request.
 - **Repo polish pack:** LICENSE, .gitignore, issue templates, a CI workflow, and AGENTS.md + CLAUDE.md for AI coding tools.
 - **AI helper, your choice:**
   - **Free cloud (Groq):** paste a free API key and it works in a minute. Your text goes to Groq.

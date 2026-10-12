@@ -158,6 +158,7 @@
   }
 
   // ================================================================ navigation
+  const PAGES = ["ship", "learn", "tools", "history", "settings"];
   function go(page, focusId) {
     $$("[data-page]").forEach(p => { p.hidden = p.dataset.page !== page; });
     $$("nav.tabs-main button").forEach(b => b.setAttribute("aria-current", b.dataset.go === page ? "page" : "false"));
@@ -619,8 +620,9 @@
         if (!validBranch(branch)) { setStatus("shipMsg", "Branch names use letters, numbers, - _ . and /, like steject/add-delete-command.", "bad"); return; }
         job.pr = {
           branch, title: $("prTitle").value.trim() || m.commits[m.commits.length - 1].message,
-          body: `Opened with [STEJECT](https://github.com/aadvik7/Steject).\n\n### Commits\n${m.commits.map(c => `- ${c.message}`).join("\n")}\n`,
+          body: S.prBody || `Opened with [STEJECT](https://github.com/aadvik7/Steject).\n\n### Commits\n${m.commits.map(c => `- ${c.message}`).join("\n")}\n`,
         };
+        if (S.forkOf && S.forkOf.fork === full) Object.assign(job.pr, { repo: S.forkOf.upstream, base: S.forkOf.base, headOwner: S.forkOf.owner });
       }
     } else {
       const name = $("repoName").value.trim();
@@ -679,7 +681,8 @@
     setStatus("cmpMsg", "Loading your repos…", "info");
     try {
       S.repos = await G.listRepos(S.gh.token);
-      const prev = sel.value || store.get("lastRepo", "");
+      const prev = S.wantRepo || sel.value || store.get("lastRepo", "");   // a repo just opened or forked wins
+      S.wantRepo = null;
       sel.innerHTML = `<option value="">Pick a repository…</option>` + S.repos.map(r => `<option value="${esc(r.full)}">${esc(r.full)}${r.private ? " (private)" : ""}</option>`).join("");
       if (S.repos.some(r => r.full === prev)) sel.value = prev;
       else if (S.m) { const match = S.repos.find(r => r.name.toLowerCase() === S.m.project.toLowerCase()); if (match) sel.value = match.full; }
@@ -972,6 +975,132 @@
   }
   $("histTable").addEventListener("click", e => { const b = e.target.closest("[data-undo]"); if (b) showUndo(+b.dataset.undo); });
   $("undoBox").addEventListener("click", e => { if (e.target.closest("[data-undo-close]")) $("undoBox").hidden = true; });
+
+  // ================================================================ TOOLS
+  let tool = "doctor";
+  function showTool(t) {
+    tool = t;
+    $$("#toolTabs [data-tool]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tool === t));
+    ["doctor", "issue", "class"].forEach(x => { $("tool-" + x).hidden = x !== t; });
+  }
+  $("toolTabs").addEventListener("click", e => { const b = e.target.closest("[data-tool]"); if (b) showTool(b.dataset.tool); });
+  const repoFrom = text => String(text || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/, "").replace(/\/+$/, "").split("/").slice(0, 2).join("/");
+  const validRepo = full => /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(full);
+
+  /** Get the Push panel ready for changes to `full`: your repo in Update mode, or your fork of someone else's. */
+  async function prepareRepoPush(full) {
+    const own = S.gh.login && full.split("/")[0].toLowerCase() === S.gh.login.toLowerCase();
+    S.forkOf = null;
+    let target = full;
+    if (!own) {
+      toast("Checking whether you can push to " + full + "…");
+      const t = await G.pushTarget(S.gh.token, full, msg => toast(msg + "…"));
+      if (t.fork) { S.forkOf = { upstream: t.upstream, fork: t.target, base: t.base, owner: t.owner }; target = t.target; }
+    }
+    store.set("lastRepo", target); S.wantRepo = target; S.repos = []; S.target = null; S.ctx = null;
+    setMode("update");
+  }
+
+  // ---------------- Repo doctor
+  let doc = null;   // {full, read, report}
+  /** Latest versions from the npm and PyPI registries (both allowed by the network policy). */
+  async function latestVersions(deps) {
+    const out = {};
+    await Promise.all(deps.map(async d => {
+      const url = d.eco === "npm" ? `https://registry.npmjs.org/${d.name.replace("/", "%2F")}/latest` : `https://pypi.org/pypi/${encodeURIComponent(d.name)}/json`;
+      try {
+        const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+        const res = await fetch(url, { signal: ctl.signal }); clearTimeout(t);
+        if (!res.ok) return;
+        const j = await res.json();
+        const v = d.eco === "npm" ? j.version : j.info && j.info.version;
+        if (v) out[d.eco + ":" + d.name] = v;
+      } catch {}
+    }));
+    return out;
+  }
+  $("docRepo").addEventListener("keydown", e => { if (e.key === "Enter") $("docGo").click(); });
+  $("docGo").addEventListener("click", async () => {
+    const full = repoFrom($("docRepo").value);
+    if (!validRepo(full)) { setStatus("docMsg", "Type the repo as owner/name, or paste its GitHub link.", "bad"); return; }
+    $("docGo").disabled = true; $("docOut").hidden = true; $("docFixBox").hidden = true;
+    setStatus("docMsg", "Reading the repo…", "info");
+    try {
+      const read = await G.importRepo(S.gh.token, full, { onProgress: (n, t) => setStatus("docMsg", `Reading files… ${n} of ${t}`, "info") });
+      if (!read.head) throw new Error("That repo is empty.");
+      setStatus("docMsg", "Looking up the latest package versions…", "info");
+      const latest = await latestVersions(SteDoctor.depsToCheck(read.files, 15));
+      const report = SteDoctor.diagnose({ files: read.files, tree: read.tree, latest });
+      doc = { full: read.full, read, report };
+      $("docScore").textContent = report.score + "/100";
+      $("docGrade").textContent = report.grade;
+      $("docList").innerHTML = report.items.map(i => `<li class="${i.ok ? "ok" : "bad"}"><span class="m">${i.ok ? "✓" : "✗"}</span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.detail)}</span></li>`).join("");
+      $("docFix").hidden = !report.items.some(i => i.fix);
+      $("docOut").hidden = false;
+      setStatus("docMsg", `Checked ${read.full}: ${plural(read.tree.length, "file")}${Object.keys(latest).length ? `, ${plural(Object.keys(latest).length, "package")} looked up` : ""}.`, "ok");
+    } catch (e) {
+      setStatus("docMsg", e.status === 404 ? "Couldn't find that repo. Check the name; private repos need GitHub connected." : e.message, "bad");
+    } finally { $("docGo").disabled = false; }
+  });
+  const DOC_FIXES = {
+    readme: { label: "Write a better README", note: "AI writes it from the code", ai: true },
+    license: { label: "Add an MIT LICENSE", note: "with your GitHub name and the year" },
+    gitignore: { label: "Add a .gitignore", note: "picked for the project's language" },
+    junk: { label: "Stop tracking files that shouldn't be in Git", note: "removes them from the repo (not from your computer) and adds them to .gitignore" },
+    tests: { label: "Add tests", note: "AI writes them with the language's usual test tool", ai: true },
+    ci: { label: "Add a CI workflow", note: "runs the tests on every push; your token needs the workflow scope" },
+  };
+  $("docFix").addEventListener("click", () => {
+    const fixes = [...new Set(doc.report.items.map(i => i.fix).filter(Boolean))];
+    $("docFixList").innerHTML = fixes.map(f => `<label class="cb"><input type="checkbox" data-docfix="${f}" ${DOC_FIXES[f].ai && !aiOn() ? "disabled" : "checked"}> <span><b>${esc(DOC_FIXES[f].label)}</b> · ${esc(DOC_FIXES[f].note)}${DOC_FIXES[f].ai && !aiOn() ? " (needs an AI helper)" : ""}</span></label>`).join("");
+    $("docFixBox").hidden = false;
+    setStatus("docFixMsg", "");
+  });
+  $("docWrite").addEventListener("click", async () => {
+    const want = new Set($$("#docFixList [data-docfix]").filter(c => c.checked).map(c => c.dataset.docfix));
+    if (!want.size) { setStatus("docFixMsg", "Tick at least one fix.", "bad"); return; }
+    if (!S.gh.login) { setStatus("docFixMsg", "Connect GitHub in Settings first, so the fixes can be pushed.", "bad"); return; }
+    const { read, report } = doc;
+    $("docWrite").disabled = true;
+    try {
+      const name = read.full.split("/")[1];
+      openProject(read.files, name, "github", read.skipped);
+      const existing = new Set(read.tree.map(t => t.path));
+      const commits = [];
+      const pol = C.polish(S.m, { license: want.has("license"), gitignore: want.has("gitignore") && !want.has("junk"), ci: want.has("ci"), author: S.gh.login, year: new Date().getFullYear(), existing });
+      if (pol) commits.push(pol);
+      if (want.has("junk") && report.junk.length) {
+        const files = new Map(report.junk.slice(0, 200).map(p => [p, null]));
+        const old = read.files.get(".gitignore");
+        const base = old != null ? old : (C.polish({ project: name, commits: [{ message: "x", files: read.files }] }, { gitignore: true }) || { files: new Map([[".gitignore", ""]]) }).files.get(".gitignore") || "";
+        const lines = report.junkIgnore.filter(l => !base.split("\n").map(x => x.trim()).includes(l));
+        if (lines.length || old == null) files.set(".gitignore", base.replace(/\n*$/, "\n") + (lines.length ? (old != null ? "\n# added by STEJECT Repo doctor\n" : "") + lines.join("\n") + "\n" : ""));
+        commits.push({ message: "Stop tracking files that shouldn't be in Git", files });
+      }
+      if (commits.length) setText(C.serialize(C.applyChanges(S.m, { commits })), true, null, `Before the Repo doctor fixes for ${read.full}`);
+      if (want.has("readme")) {
+        setStatus("docFixMsg", "The AI is writing a README…", "info");
+        const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.readme(C.digest(S.m, codeBudget())), { signal, temperature: 0.3, maxTokens: 3000, onWait: waitNote("docFixMsg") }));
+        const readme = out.trim().replace(/^```(?:markdown|md)?\n/i, "").replace(/\n```\s*$/, "") + "\n";
+        setText(C.serialize(C.applyChanges(S.m, { commits: [{ message: "Improve the README", files: new Map([["README.md", readme]]) }] })), true, null, "Before the Repo doctor README");
+      }
+      if (want.has("tests")) {
+        setStatus("docFixMsg", "The AI is writing tests…", "info");
+        const out = await aiRun(signal => llm().chat(aiModel(), AI.prompts.change("Add tests for the main code using this language's usual test tool (for example pytest for Python, node --test or the existing test runner for JavaScript). Put them where that tool expects them, keep them small and readable, and update the README's test section.", C.digest(S.m, codeBudget())), { signal, temperature: 0.2, maxTokens: 5000, onWait: waitNote("docFixMsg") }));
+        try { setText(C.serialize(C.applyChanges(S.m, C.parse(cleanFence(out)))), true, null, "Before the Repo doctor tests"); }
+        catch { setStatus("docFixMsg", "The AI's tests weren't in the right format, so they were left out.", "bad"); }
+      }
+      S.prevFiles = read.files; render();
+      // push as a pull request: own repo → branch; anyone else's → their fork (see Issue → pull request)
+      await prepareRepoPush(read.full);
+      $("prOn").checked = true; $("prFields").hidden = false; store.set("prOn", true);
+      $("prBranch").dataset.touched = "1"; $("prBranch").value = "steject/repo-doctor-fixes";
+      $("prTitle").dataset.touched = "1"; $("prTitle").value = "Repo doctor fixes";
+      go("ship");
+      toast("The fixes are on the Ship page as commits. Read them, then push the pull request.");
+    } catch (e) { setStatus("docFixMsg", e.name === "AbortError" ? "Stopped." : e.message, "bad"); }
+    finally { $("docWrite").disabled = false; }
+  });
 
   // ================================================================ HISTORY
   function addHistory(entry) {
@@ -1783,7 +1912,7 @@
       $("importBox").hidden = true; setStatus("importMsg", "");
       // your own repo: changes go on top of it as new commits
       if (S.gh.login && r.full.split("/")[0].toLowerCase() === S.gh.login.toLowerCase()) {
-        store.set("lastRepo", r.full); S.repos = []; S.target = null; S.ctx = null; setMode("update");
+        store.set("lastRepo", r.full); S.wantRepo = r.full; S.repos = []; S.target = null; S.ctx = null; setMode("update");
       }
     } catch (e) {
       setStatus("importMsg", e.status === 404 ? "Couldn't find that repo. Check the name; private repos need GitHub connected." : e.message, "bad");
@@ -1983,11 +2112,11 @@
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key === "Enter" && !$("page-ship").hidden) { e.preventDefault(); if (S.mode === "kit") $("dlBtn").click(); else if (!$("pushBtn").disabled) doPush(); }
     if (mod && (e.key === "o" || e.key === "O")) { e.preventDefault(); go("ship"); $("fileIn").click(); }
-    if (mod && /^[1-4]$/.test(e.key)) { e.preventDefault(); go(["ship", "learn", "history", "settings"][+e.key - 1]); }
+    if (mod && /^[1-5]$/.test(e.key)) { e.preventDefault(); go(PAGES[+e.key - 1]); }
   });
   if (native && native.onMenu) native.onMenu(cmd => {
     if (cmd === "open") { go("ship"); $("fileIn").click(); }
-    else if (["ship", "learn", "history", "settings"].includes(cmd)) go(cmd);
+    else if (PAGES.includes(cmd)) go(cmd);
     else if (cmd === "check-updates") checkUpdate(true);
   });
 
@@ -2026,7 +2155,7 @@
     updateShip();
 
     const page = (location.hash || "#ship").slice(1);
-    go(["ship", "learn", "history", "settings"].includes(page) ? page : "ship");
+    go(PAGES.includes(page) ? page : "ship");
     if (S.provider === "ollama") checkAi(); else { renderAiChip(); renderLearn(); }
     renderUsage();
     if (native) setTimeout(() => checkUpdate(false), 4000);

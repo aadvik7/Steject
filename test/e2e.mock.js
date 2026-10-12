@@ -39,7 +39,7 @@ function mkRepo(full, files, n) {
 const hist = r => { const o = []; let c = r.ref; while (c) { o.push(c); c = r.commits[c].parents[0]; } return o; };
 const treeOf = r => r.ref ? r.trees[r.commits[r.ref].tree] : {};
 const isAncestor = (r, anc, c) => { while (c) { if (c === anc) return true; c = r.commits[c].parents[0]; } return false; };
-const rj = r => ({ name: r.name, full_name: `${r.owner}/${r.name}`, owner: { login: r.owner }, default_branch: r.branch, html_url: `https://github.com/${r.owner}/${r.name}`, private: false, pushed_at: "2026-10-01T00:00:00Z" });
+const rj = r => ({ name: r.name, full_name: `${r.owner}/${r.name}`, owner: { login: r.owner }, default_branch: r.branch, html_url: `https://github.com/${r.owner}/${r.name}`, private: false, pushed_at: "2026-10-01T00:00:00Z", permissions: { push: r.owner === "aadvik" } });
 
 async function gh(route) {
   const req = route.request();
@@ -58,6 +58,18 @@ async function gh(route) {
   const r = repos[mm[1] + "/" + mm[2]], rest = mm[3];
   if (!r) return send(404, { message: "Not Found" });
   if (rest === "") return send(200, rj(r));
+  if (rest === "/forks" && m === "POST") {
+    const name = "aadvik/" + r.name;
+    if (!repos[name]) repos[name] = { ...JSON.parse(JSON.stringify({ commits: r.commits, trees: r.trees })), owner: "aadvik", name: r.name, ref: r.ref, branch: r.branch, blobs: {}, forkOf: `${r.owner}/${r.name}` };
+    return send(202, rj(repos[name]));
+  }
+  if (rest === "/merge-upstream" && m === "POST") return send(200, { message: "up to date" });
+  const im = rest.match(/^\/issues\/(\d+)(\/comments)?$/);
+  if (im && m === "GET") {
+    const issue = (r.issues || {})[im[1]];
+    if (!issue) return send(404, { message: "Not Found" });
+    return send(200, im[2] ? (issue.comments || []).map(c => ({ user: { login: "teacher" }, body: c })) : { number: +im[1], title: issue.title, body: issue.body, state: "open", comments: (issue.comments || []).length, html_url: `https://github.com/${r.owner}/${r.name}/issues/${im[1]}` });
+  }
   if (rest === "/git/ref/heads/main") return r.ref ? send(200, { object: { sha: r.ref } }) : send(409, { message: "Git Repository is empty." });
   if (rest.startsWith("/git/commits/") && m === "GET") { const c = r.commits[rest.split("/").pop()]; return c ? send(200, { sha: rest.split("/").pop(), tree: { sha: c.tree }, message: c.message }) : send(404, {}); }
   if (rest.startsWith("/git/trees/") && m === "GET") {
@@ -197,6 +209,7 @@ async function customMock(route) {
   await ctx.route("https://api.groq.com/**", groqMock);
   await ctx.route("https://cdn.jsdelivr.net/pyodide/**", pyodideMock);
   await ctx.route("https://ai.example.test/**", customMock);
+  await ctx.route("https://registry.npmjs.org/**", route => route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "application/json" }, body: JSON.stringify({ version: route.request().url().includes("express") ? "5.1.0" : "1.0.0" }) }));
   await ctx.route("https://raw.githubusercontent.com/aadvik7/steject-starters/**", route => {
     const u = new URL(route.request().url()), cors = { "access-control-allow-origin": "*" };
     if (!communityUp) return route.fulfill({ status: 404, headers: cors, body: "404: Not Found" });
@@ -611,6 +624,34 @@ async function customMock(route) {
   await page.waitForFunction(() => /workflow/.test(document.querySelector("#log").textContent), null, { timeout: 15000 });
   ok((await page.textContent("#log")).includes("workflow scopes"), "CI file without the workflow scope: explains the token scope");
   noWorkflowScope = false;
+
+  // ---- 9m2. Repo doctor: score + checklist for someone else's messy repo, then fixes → a pull request from your fork
+  mkRepo("someone/messy", { "main.py": "print('hi')\n", "README.md": "# messy\n", ".env": "PASSWORD=hunter2\n", "node_modules/x/index.js": "module.exports = 1\n", "package.json": JSON.stringify({ dependencies: { express: "^3.0.0" } }) }, 1);
+  await page.click('nav [data-go="tools"]');
+  ok(await page.isVisible("#tool-doctor"), "Tools page opens on the Repo doctor");
+  await page.fill("#docRepo", "https://github.com/someone/messy");
+  await page.click("#docGo");
+  await page.waitForSelector("#docOut:not([hidden])", { timeout: 10000 });
+  const docText = await page.textContent("#docList");
+  ok(+(await page.textContent("#docScore")).split("/")[0] < 50 && /No license/.test(docText) && /node_modules\/x\/index\.js/.test(docText) && /No tests found/.test(docText) && /express \^3\.0\.0 → 5\.1\.0/.test(docText), "doctor: low score with plain reasons (license, committed junk, tests, old express)");
+  await shot({ path: `${OUT}/13-doctor.png`, fullPage: true });
+  await page.click("#docFix");
+  ok((await page.$$("#docFixList [data-docfix]:checked")).length === 6, "doctor: fix plan lists every fixable item, all ticked");
+  await page.uncheck('[data-docfix="ci"]');
+  groqPlan = [{ text: "# messy\n\nPrints hi.\n\n## Install\nNothing to install.\n\n## Usage\npython main.py\n\n## Tests\npython -m pytest\n" }, { text: "=== FILE: test_main.py ===\nimport main\n\ndef test_runs():\n    assert True\n=== COMMIT: Add tests ===" }];
+  await page.click("#docWrite");
+  await page.waitForFunction(() => window.location.hash === "#ship" && document.querySelector("#modeUpd").getAttribute("aria-pressed") === "true", null, { timeout: 15000 });
+  const fixCommits = await page.evaluate(() => window.__steject.S.m.commits.map(c => c.message));
+  ok(fixCommits.includes("Add LICENSE") && fixCommits.includes("Stop tracking files that shouldn't be in Git") && fixCommits.includes("Improve the README") && fixCommits.includes("Add tests") && !fixCommits.some(c => /CI/.test(c)), "doctor: approved fixes become reviewable commits (CI left out as unticked)");
+  ok(repos["aadvik/messy"] && (await page.inputValue("#repoPick")) === "aadvik/messy" && await page.isChecked("#prOn"), "doctor: someone else's repo → pushes go to your fork, as a pull request");
+  await page.waitForFunction(() => !document.querySelector("#pushBtn").disabled, null, { timeout: 8000 });
+  await page.click("#pushBtn");
+  await page.waitForSelector("#doneBox:not([hidden])", { timeout: 15000 });
+  const fixPr = prs[prs.length - 1], fork = repos["aadvik/messy"], forkBranch = fork.branches["steject/repo-doctor-fixes"];
+  const forkTree = fork.trees[fork.commits[forkBranch].tree];
+  ok(fixPr.head === "aadvik:steject/repo-doctor-fixes" && fixPr.base === "main" && /someone\/messy\/pull/.test(fixPr.html_url), "doctor: pull request opened from the fork into the original repo");
+  ok(!(".env" in forkTree) && !("node_modules/x/index.js" in forkTree) && /\.env/.test(forkTree[".gitignore"]) && "LICENSE" in forkTree && "test_main.py" in forkTree, "doctor: committed junk removed and ignored; license and tests added");
+  await page.uncheck("#prOn"); await page.click("#modeNew");
 
   // ---- 9n. Learn through Groq, then remove the key
   await page.fill("#manifest", good);

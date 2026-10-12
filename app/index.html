@@ -23,6 +23,7 @@
   <nav class="tabs-main" aria-label="Main">
     <button type="button" data-go="ship" aria-current="page">Ship</button>
     <button type="button" data-go="learn">Learn</button>
+    <button type="button" data-go="tools">Tools</button>
     <button type="button" data-go="history">History</button>
     <button type="button" data-go="settings">Settings</button>
   </nav>
@@ -326,6 +327,42 @@
   </div>
 </main>
 
+<!-- ================================================================== TOOLS -->
+<main class="wrap" id="page-tools" data-page="tools" hidden>
+  <div class="page-head">
+    <div>
+      <h1>Tools</h1>
+      <p>Check a repo's health, turn a GitHub issue into a pull request, and run classroom assignments.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Tool" id="toolTabs">
+      <button type="button" data-tool="doctor" aria-pressed="true">Repo doctor</button>
+      <button type="button" data-tool="issue" aria-pressed="false">Issue → pull request</button>
+      <button type="button" data-tool="class" aria-pressed="false">Classroom</button>
+    </div>
+  </div>
+
+  <section class="panel tool" id="tool-doctor">
+    <h2 class="k">Repo doctor</h2>
+    <p class="note">Checks a GitHub repo the way a reviewer would: README, license, .gitignore, tests, CI, big files, leaked secrets, old dependencies and structure. You get a score, a checklist, and a one-click plan to fix what's missing.</p>
+    <div class="row nowrap"><input id="docRepo" type="text" list="importRepos" placeholder="owner/name or a GitHub link" autocomplete="off" spellcheck="false" aria-label="Repository"><button class="btn primary" id="docGo" type="button">Check it</button></div>
+    <p class="status" id="docMsg" role="status"></p>
+    <div class="stack" id="docOut" hidden>
+      <div class="row"><span class="score" id="docScore"></span><span class="docgrade" id="docGrade"></span></div>
+      <ul class="checklist" id="docList"></ul>
+      <div class="row"><button class="btn ai" id="docFix" type="button">Fix it</button></div>
+      <div class="planbox" id="docFixBox" hidden>
+        <h3 class="k">Fix plan · untick anything you don't want</h3>
+        <div class="stack" id="docFixList"></div>
+        <p class="note">The fixes become commits on the Ship page, where you read them before pushing. They go to a pull request, so your main branch only changes when you merge it.</p>
+        <div class="row"><button class="btn ai" id="docWrite" type="button">Approve and write the fixes</button><span class="status" id="docFixMsg" role="status"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tool" id="tool-issue" hidden></section>
+  <section class="panel tool" id="tool-class" hidden></section>
+</main>
+
 <!-- ================================================================== HISTORY -->
 <main class="wrap" id="page-history" data-page="history" hidden>
   <div class="page-head">
@@ -505,6 +542,7 @@
 <script src="js/build-info.js"></script>
 <script src="js/core.js"></script>
 <script src="js/safety.js"></script>
+<script src="js/doctor.js"></script>
 <script src="js/github.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/webai.js"></script>
