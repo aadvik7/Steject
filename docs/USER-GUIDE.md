@@ -46,7 +46,12 @@ It never pushes if the safety checks find a possible secret. If there are only w
 In Inspect, click **▶ Check it runs**:
 - **Python:** runs your tests with pytest, or compiles the files and runs the main script (`main.py`, `app.py`, …). A program that asks for keyboard input is stopped there, and one that keeps running (a server or a loop) is stopped after 15 seconds. Both count as running. The first check downloads Python for the browser (about 10 MB, once).
 - **Web pages:** opens `index.html` in a sandbox and collects errors from the page's console.
-- **Node, Java, Go:** can't be checked inside STEJECT yet. It tells you the command to run on your computer instead.
+- **Node.js, Go, Java, C and C++ (desktop app):** STEJECT uses the tools installed on your computer: `npm test` (or `node --check`), `go build` + `go test`, `javac`, `gcc`/`g++` and running the program. Python projects whose packages can't run in the browser use your Python too.
+  - A window always shows the **exact commands** and asks first. Nothing runs if you say no.
+  - They run in a new temporary folder that's deleted afterwards, without your saved tokens or environment secrets, with a time limit and an output limit.
+  - Network: blocked on Linux when the system allows it; otherwise package managers are switched to offline mode. So `npm install` is off by default; turn it on in **Settings → Run checks on this computer** if the tests need packages.
+  - Failures feed the same **Fix with AI** loop.
+  - Settings shows which tools STEJECT found. In the browser version these languages can't be checked.
 
 If it fails, click **Fix with AI**: the error output goes to the AI, which returns only the fixed files. STEJECT checks again, up to 3 tries. Fixes go into the existing commits, are marked *changed*, and **Undo** reverts all of them.
 

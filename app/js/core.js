@@ -374,6 +374,10 @@
     } else if (has(/\.java$/)) {
       out.lang = "java"; out.tests = has(/Test\.java$/);
       if (files.has("pom.xml")) { out.test = "mvn test"; out.install = "mvn -q compile"; }
+    } else if (has(/\.(cpp|cc|cxx)$/)) {
+      out.lang = "cpp"; out.run = "g++ -o program *.cpp && ./program";
+    } else if (has(/\.c$/)) {
+      out.lang = "c"; out.run = "gcc -o program *.c && ./program";
     } else if (html) {
       out.lang = "web"; out.run = `open ${html} in a browser`;
     }

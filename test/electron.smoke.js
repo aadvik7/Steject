@@ -21,7 +21,7 @@ const fakeOllama = http.createServer((req, res) => {
   const app = await electron.launch({
     executablePath: require(path.join(__dirname, "..", "node_modules", "electron")),
     args: [path.join(__dirname, ".."), "--no-sandbox"],
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
+    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: "1", STEJECT_TEST_APPROVE: "1" },
   });
   const win = await app.firstWindow();
   await win.waitForLoadState("domcontentloaded");
@@ -58,6 +58,15 @@ const fakeOllama = http.createServer((req, res) => {
   }));
   ok(preview === "ready", "sandboxed project preview loads in the desktop app");
   ok(await win.evaluate(() => typeof window.steNative.allowHost === "function"), "bridge can allow the user's AI address");
+  const tools = await win.evaluate(() => window.steNative.checks.detect());
+  ok(/^v\d+/.test(tools.node || ""), "desktop checks: finds the installed Node.js (" + tools.node + ", network " + tools.isolation + ")");
+  const pass = await win.evaluate(() => window.steNative.checks.run({
+    "package.json": JSON.stringify({ scripts: { test: "node --test" } }),
+    "a.test.js": "require('node:test')('adds', () => require('node:assert').equal(1 + 1, 2));\n",
+  }, { project: "smoke" }));
+  ok(pass.status === "pass" && pass.commands[0] === "npm test", "desktop checks: runs a project's tests on this computer (" + pass.status + ")");
+  const fail = await win.evaluate(() => window.steNative.checks.run({ "bad.js": "function (\n" }, { project: "smoke2" }));
+  ok(fail.status === "fail" && /SyntaxError/.test(fail.output), "desktop checks: reports a failure with its output");
   await win.screenshot({ path: path.join(process.env.SHOTS || path.join(__dirname, "shots"), "electron.png") });
   await app.close();
   fakeOllama.close();

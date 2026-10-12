@@ -15,5 +15,9 @@ contextBridge.exposeInMainWorld("steNative", {
   setTheme: theme => ipcRenderer.invoke("theme", theme),
   info: () => ipcRenderer.invoke("info"),
   allowHost: url => ipcRenderer.invoke("net:allow", url),
+  checks: {
+    detect: () => ipcRenderer.invoke("checks:detect"),
+    run: (files, opts) => ipcRenderer.invoke("checks:run", { files, ...(opts || {}) }),
+  },
   onMenu: cb => { ipcRenderer.on("menu", (_e, cmd) => cb(cmd)); },
 });

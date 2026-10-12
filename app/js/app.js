@@ -157,6 +157,7 @@
     if (focusId === "groqKey") setProvider("groq");
     else if (focusId === "aiUrl" && S.provider !== "ollama") focusId = S.provider === "groq" ? "groqKey" : "customUrl";
     if (page === "settings" && S.provider === "ollama" && !S.ai.ok) checkAi();
+    if (page === "settings") renderRuntimes();
     window.scrollTo(0, 0);
     if (focusId) setTimeout(() => { const el = $(focusId); if (el && !el.closest("[hidden]")) el.focus(); }, 30);
   }
@@ -1452,7 +1453,7 @@
       runAbort = new AbortController();
       const doCheck = async label => {
         L.run(label, "Checking it runs");
-        const r = await SteRun.check(S.m, { signal: runAbort.signal, host: $("runHost"), onProgress: t => L.run(label, t) });
+        const r = await SteRun.check(S.m, checkOpts({ signal: runAbort.signal, onProgress: t => L.run(label, t) }));
         S.run = { fp: C.fingerprint(S.m), ...r };
         return r;
       };
@@ -1565,6 +1566,26 @@
     $("runDetails").hidden = !outText;
     if (outText) { $("runOut").textContent = outText; $("runSum").textContent = r.kind === "web" ? "Page console" : "Output"; }
   }
+  // desktop app: Node, Go, Java, C/C++ (and Python packages the browser can't run) use the tools on this computer, after asking
+  const checkOpts = extra => ({ native: native && native.checks ? native.checks : null, project: S.m ? S.m.project : "", allowInstall: !!store.get("checksInstall", false), host: $("runHost"), ...extra });
+  async function renderRuntimes() {
+    $("checksInstall").checked = !!store.get("checksInstall", false);
+    if (!(native && native.checks)) {
+      $("rtNote").textContent = "Desktop app only. In the browser, Python and web pages are checked in a sandbox; other languages need the desktop app.";
+      $("rtList").hidden = true; $("checksInstallRow").hidden = true;
+      return;
+    }
+    $("rtNote").textContent = "Checking which tools are installed…";
+    let t;
+    try { t = await native.checks.detect(); } catch { $("rtNote").textContent = "Couldn't look for installed tools."; return; }
+    const rows = [["Node.js", t.node], ["npm", t.npm], ["Python", t.python], ["pytest", t.pytest], ["Go", t.go], ["Java (javac)", t.javac], ["C (gcc)", t.gcc], ["C++ (g++)", t.gxx]];
+    $("rtList").innerHTML = rows.map(([n, v]) => `<li class="${v ? "ok" : ""}"><span>${v ? "✓" : "–"} ${esc(n)}</span><span class="note">${esc(v || "not installed")}</span></li>`).join("");
+    $("rtNote").textContent = t.isolation === "blocked"
+      ? "Network access is blocked while checks run."
+      : "Network: package managers are switched to offline mode while checks run, but the project's own code could still go online. Only approve code you've read.";
+  }
+  $("checksInstall").addEventListener("change", () => store.set("checksInstall", $("checksInstall").checked));
+
   /** Ask the AI to fix a failed check and apply its changed files. False if its reply couldn't be used. */
   async function aiFix(r, n, onWait) {
     const before = C.finalFiles(S.m);
@@ -1585,7 +1606,7 @@
       for (;;) {
         if (!r) {
           const m = S.m;
-          r = await SteRun.check(m, { signal, host: $("runHost"), onProgress: t => setStatus("runMsg", t, "info") });
+          r = await SteRun.check(m, checkOpts({ signal, onProgress: t => setStatus("runMsg", t, "info") }));
           S.run = { fp: C.fingerprint(m), ...r };
         }
         if (!fix || r.status !== "fail" || tries >= 3 || !aiOn() || signal.aborted) break;

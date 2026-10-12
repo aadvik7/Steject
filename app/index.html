@@ -454,6 +454,14 @@
       </div>
     </section>
 
+    <section class="panel" aria-labelledby="s-run">
+      <h2 class="k" id="s-run" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">Run checks on this computer</h2>
+      <p class="note">In the desktop app, <b>Check it runs</b> can use your own tools for Node.js, Python, Go, Java and C/C++ projects. STEJECT always shows the exact commands and asks before running anything, in a temporary folder that's deleted afterwards.</p>
+      <ul class="rtlist" id="rtList"></ul>
+      <p class="note" id="rtNote"></p>
+      <label class="cb" id="checksInstallRow"><input id="checksInstall" type="checkbox"> <span>Let checks run <code>npm install</code> first (downloads the project's packages, so it uses the network)</span></label>
+    </section>
+
     <section class="panel" aria-labelledby="s-app">
       <h2 class="k" id="s-app" style="font:600 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0">App</h2>
       <div class="stack">

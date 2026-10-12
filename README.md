@@ -31,7 +31,7 @@ Chat AIs can write a whole project in one reply. Getting it onto GitHub still me
 - **Telegram alerts:** get a message when a push succeeds or fails.
 - **Ship it for me:** one button from idea to pushed repo: plan (you approve it), write, check, AI fixes, safety checks, push. You set the limits (AI calls, tokens, files, fix tries); private repo by default; it never pushes a secret.
 - **Start from an idea, plan first:** describe a project (or pick one of 18 starters) and the AI proposes a file tree and commit plan. Edit it, approve it, and only then are the files written.
-- **Check it runs, and fix it:** Python tests or the main script run in the browser, and web pages open in a sandbox. If it fails, the error goes back to the AI to fix, up to 3 tries.
+- **Check it runs, and fix it:** Python tests or the main script run in the browser, and web pages open in a sandbox. In the desktop app, Node.js, Go, Java and C/C++ projects run with your own installed tools, after you approve the exact commands, in a throwaway folder with no network for package managers. If it fails, the error goes back to the AI to fix, up to 3 tries.
 - **Live preview:** web projects show in a sandboxed preview tab with no network access.
 - **Change it by chatting:** type "add a delete command" and get only the changed files as a new commit, with a diff.
 - **Open an existing project:** a local folder or a GitHub repo, to explain, improve or extend it.

@@ -1,6 +1,7 @@
 // STEJECT desktop app — Electron main process.
 const { app, BrowserWindow, ipcMain, shell, safeStorage, Menu, nativeTheme, session, dialog, clipboard } = require("electron");
 const path = require("path");
+const Checks = require("./checks");
 const fs = require("fs");
 
 const APP_DIR = path.join(__dirname, "..", "app");
@@ -145,6 +146,35 @@ ipcMain.handle("net:allow", (_e, url) => {
   const prefs = readJson("prefs.json", {});
   if (prefs.aiOrigin !== origin) { writeJson("prefs.json", { ...prefs, aiOrigin: origin }); allowLocalApis(); }
   return true;
+});
+// ---------------------------------------------------------------- run checks on this computer (always asks first)
+const approvedChecks = new Set();   // "don't ask again" for the same project and commands, until the app closes
+ipcMain.handle("checks:detect", () => Checks.detect(true));
+ipcMain.handle("checks:run", async (_e, payload) => {
+  const { files: obj, project, allowInstall } = payload || {};
+  const files = new Map(Object.entries(obj || {}).filter(([, v]) => typeof v === "string"));
+  if (!files.size || files.size > 400) return { status: "error", detail: "Nothing to check, or too many files (400 at most)." };
+  const tools = Checks.detect();
+  const p = Checks.plan(files, tools, { allowInstall: !!allowInstall });
+  if (p.unsupported) return { status: "unsupported", detail: p.unsupported };
+  const commands = p.cmds.map(c => Checks.show(c) + (c.network ? "    (uses the network)" : ""));
+  const key = String(project || "") + "\n" + commands.join("\n");
+  const testApprove = process.env.STEJECT_TEST_APPROVE === "1" && !app.isPackaged;   // automated tests only, never in the installed app
+  if (!testApprove && !approvedChecks.has(key)) {
+    const r = await dialog.showMessageBox(win, {
+      type: "question", title: "Run checks on this computer?", noLink: true,
+      buttons: ["Run these commands", "Cancel"], defaultId: 1, cancelId: 1,
+      message: "STEJECT wants to run these commands on your computer:",
+      detail: commands.map(c => "   " + c).join("\n") + "\n\nThey run in a new temporary folder that is deleted afterwards, without your saved tokens. " +
+        (tools.isolation === "blocked" ? "Network access is blocked while they run." : "Package managers are switched to offline mode, but the code itself could still use the network.") +
+        "\n\nOnly approve if you've read the project's code.",
+      checkboxLabel: "Don't ask again for these commands in this project until I close STEJECT",
+    });
+    if (r.response !== 0) return { status: "denied", detail: "You didn't approve the commands, so nothing ran." };
+    if (r.checkboxChecked) approvedChecks.add(key);
+  }
+  const res = await Checks.run(files, p.cmds, tools);
+  return { status: res.status, steps: res.steps, output: res.output, isolation: res.isolation, lang: p.lang, note: p.note || "", commands };
 });
 ipcMain.handle("info", () => ({ version: BUILD.version, repo: BUILD.repo, platform: process.platform, encrypted: safeStorage.isEncryptionAvailable() }));
 

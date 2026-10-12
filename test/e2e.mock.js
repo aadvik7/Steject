@@ -688,6 +688,47 @@ async function customMock(route) {
   await page.setViewportSize({ width: 1360, height: 1000 });
   await shot({ path: `${OUT}/8-desktop-dark.png`, fullPage: true });
 
+  // ---- 12. desktop checks (renderer side): a stand-in bridge records what would run on the computer
+  const dctx = await browser.newContext({ viewport: { width: 1360, height: 1000 } });
+  await dctx.route("http://localhost:11434/**", ollama);
+  await dctx.addInitScript(() => {
+    const calls = [];
+    window.__checkCalls = calls;
+    window.__checkReply = { status: "pass", lang: "node", steps: [{ label: "Run the tests", code: 0 }], output: "$ npm test\nok 1", isolation: "limited", commands: ["npm test"], note: "" };
+    window.steNative = {
+      isDesktop: true, platform: "test",
+      secrets: { get: async () => null, set: async () => true, del: async () => true },
+      copy: async () => true, setTheme: async () => true, info: async () => ({}), allowHost: async () => true, onMenu: () => {}, saveFile: async () => true,
+      checks: {
+        detect: async () => ({ node: "v22.0.0", npm: "10.0.0", python: null, pytest: null, go: null, javac: null, gcc: "gcc 13", gxx: null, isolation: "limited" }),
+        run: async (files, opts) => { calls.push({ files, opts }); return window.__checkReply; },
+      },
+    };
+  });
+  const dp = await dctx.newPage();
+  dp.on("pageerror", e => errors.push("desktop page: " + e.message));
+  await dp.goto(base);
+  await dp.fill("#manifest", '=== PROJECT: node-app ===\n=== FILE: package.json ===\n{"scripts":{"test":"node --test"}}\n=== FILE: a.test.js ===\nrequire("node:test")("x", () => {});\n=== COMMIT: Add app ===');
+  await dp.waitForTimeout(300);
+  await dp.click("#runCheck");
+  await dp.waitForFunction(() => /this computer/.test(document.querySelector("#runMsg").textContent), null, { timeout: 5000 });
+  const dcall = await dp.evaluate(() => window.__checkCalls[0]);
+  ok(Object.keys(dcall.files).sort().join(",") === "a.test.js,package.json" && dcall.opts.project === "node-app" && dcall.opts.allowInstall === false, "desktop checks: the project's files go to the desktop runner, npm install off by default");
+  ok((await dp.textContent("#runMsg")).includes("Node.js: all checks pass on this computer") && (await dp.textContent("#checks")).includes("Yes"), "desktop checks: a pass shows as Runs: Yes");
+  await dp.evaluate(() => { window.__checkReply = { status: "fail", lang: "node", steps: [{ label: "Run the tests", code: 1 }], output: "$ npm test\nnot ok 1 - x\nAssertionError", isolation: "limited", commands: ["npm test"] }; });
+  await dp.fill("#manifest", (await dp.inputValue("#manifest")).replace("Add app", "Add the app")); await dp.waitForTimeout(300);
+  await dp.click("#runCheck");
+  await dp.waitForFunction(() => /Failed/.test(document.querySelector("#runMsg").textContent), null, { timeout: 5000 });
+  ok((await dp.textContent("#runMsg")).includes("Failed: run the tests") && (await dp.textContent("#runOut")).includes("AssertionError"), "desktop checks: a failure shows the output (ready for the AI fix loop)");
+  await dp.evaluate(() => { window.__checkReply = { status: "denied", detail: "You didn't approve the commands, so nothing ran." }; });
+  await dp.fill("#manifest", (await dp.inputValue("#manifest")).replace("Add the app", "Add app 2")); await dp.waitForTimeout(300);
+  await dp.click("#runCheck"); await dp.waitForTimeout(400);
+  ok((await dp.textContent("#runMsg")).includes("didn't approve") && !(await dp.textContent("#checks")).includes("Yes"), "desktop checks: saying no means nothing runs, and it isn't a pass");
+  await dp.evaluate(() => window.__steject.go("settings"));
+  await dp.waitForFunction(() => /Node\.js/.test(document.querySelector("#rtList").textContent), null, { timeout: 5000 });
+  ok((await dp.textContent("#rtList")).includes("v22.0.0") && (await dp.textContent("#rtList")).includes("not installed") && !(await dp.isChecked("#checksInstall")), "desktop checks: Settings lists the installed tools");
+  await dctx.close();
+
   ok(errors.length === 0, "no page errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   await browser.close(); server.close();
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

@@ -96,6 +96,20 @@
     });
   }
 
+  // ------------------------------------------------------------------ desktop: real tools on this computer (asks first)
+  const LANG = { node: "Node.js", python: "Python", go: "Go", java: "Java", c: "C", cpp: "C++" };
+  async function desktop(files, st, opts) {
+    opts.onProgress && opts.onProgress("Waiting for you to approve the commands…");
+    const r = await opts.native.run(Object.fromEntries(files), { project: opts.project, allowInstall: !!opts.allowInstall });
+    if (r.status !== "pass" && r.status !== "fail") return { status: "unsupported", kind: st.lang, summary: r.status === "denied" ? "Not run" : "Can't run here", detail: r.detail, output: "" };
+    const failed = r.status === "fail" ? r.steps[r.steps.length - 1] : null;
+    return {
+      status: r.status, kind: r.lang || st.lang, desktop: true, isolation: r.isolation, commands: r.commands,
+      summary: r.status === "pass" ? `${LANG[r.lang] || "Checks"}: all checks pass on this computer` : `Failed: ${failed ? failed.label.toLowerCase() : "a check"}`,
+      detail: r.note || "", output: r.output,
+    };
+  }
+
   // ------------------------------------------------------------------ check
   /**
    * Does this project run? Resolves {status: "pass"|"fail"|"unsupported"|"stopped"|"error", kind, summary, output}.
@@ -110,11 +124,13 @@
       if (st.tests) {
         say("Running the tests…");
         r = await python("test", files, null, { ...opts, onProgress: say });
+        if (r.status === "unsupported" && opts.native) return desktop(files, st, opts);   // packages the browser can't run
         if (r.status === "pass") return { ...r, kind: "python", summary: "Tests pass" };
         if (r.status !== "notests") return { ...r, kind: "python", summary: r.status === "fail" ? "Tests fail" : r.detail || "Couldn't run" };
       }
       say("Checking the Python files…");
       r = await python("compile", files, null, { ...opts, onProgress: say });
+      if (r.status === "unsupported" && opts.native) return desktop(files, st, opts);   // packages the browser can't run
       if (r.status !== "pass") return { ...r, kind: "python", summary: r.status === "fail" ? "Syntax errors" : r.detail || "Couldn't run" };
       if (!st.entry) return { ...r, kind: "python", summary: "Compiles (nothing to run)" };
       say(`Running ${st.entry}…`);
@@ -127,8 +143,9 @@
       opts.host.innerHTML = "";   // stop the checked page; the live preview has its own frame
       return { ...r, kind: "web", summary: r.status === "pass" ? "Page loads without errors" : `${r.errors.length} error${r.errors.length === 1 ? "" : "s"} on the page` };
     }
-    const why = { node: "Node.js projects", java: "Java projects", go: "Go projects" }[st.lang] || "This kind of project";
-    return { status: "unsupported", kind: st.lang, summary: "Can't run here", detail: `${why} can't run inside STEJECT yet. Run ${st.test || st.run || "it"} on your computer.`, output: "" };
+    if (opts.native && LANG[st.lang]) return desktop(files, st, opts);
+    const why = { node: "Node.js projects", java: "Java projects", go: "Go projects", c: "C projects", cpp: "C++ projects" }[st.lang] || "This kind of project";
+    return { status: "unsupported", kind: st.lang, summary: "Can't run here", detail: `${why} can't run in the browser version. The desktop app can run their checks with the tools on your computer, or run ${st.test || st.run || "it"} yourself.`, output: "" };
   }
 
   root.SteRun = { check, python, web, stop: kill };
